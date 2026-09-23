@@ -3,7 +3,7 @@
 # families that loader can provide and none it cannot, a player joining and leaving, clean
 # shutdown with a clean log. "untested" cells run too, without failing the build.
 minecraft: 1.21.11
-version: 0.4.0
+version: 0.5.0
 platforms:
   paper:      { jar: vania-metrics-bukkit,   status: tested, on: "Paper 1.21.11-132" }
   spigot:     { jar: vania-metrics-bukkit,   status: tested, on: "Spigot 1.21.11 (4598)" }
