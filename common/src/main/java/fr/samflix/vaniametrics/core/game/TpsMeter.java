@@ -1,15 +1,17 @@
-package fr.samflix.vaniametrics.bukkit;
+package fr.samflix.vaniametrics.core.game;
 
 /**
- * TPS for servers that do not compute it (CraftBukkit, Spigot): a task run every tick records its
- * timestamp, and TPS over a window is the number of ticks in it.
+ * TPS over 1, 5 and 15 minutes, for loaders that do not compute it (CraftBukkit, Spigot, Folia's
+ * global region, Sponge): the loader runs it every tick, and TPS over a window is the number of
+ * ticks in it.
  *
  * <p>This measures ticks per second only. The interval between two ticks is never below 50 ms, so
  * it says nothing about tick duration (MSPT), and no duration histogram is derived from it.
  *
- * <p>Written by the server thread, read by the collector on the same thread.
+ * <p>It may be read from another thread than the one ticking it (Folia), hence the
+ * synchronization; uncontended, it costs nothing.
  */
-final class TpsMeter implements Runnable {
+public final class TpsMeter implements Runnable {
 
 	private static final int TICKS_PER_SECOND = 20;
 	private static final int[] WINDOWS_SECONDS = {60, 300, 900};
@@ -21,7 +23,7 @@ final class TpsMeter implements Runnable {
 	private int ticks;
 
 	@Override
-	public void run() {
+	public synchronized void run() {
 		stamps[next] = System.nanoTime();
 		next = (next + 1) % CAPACITY;
 		if (count < CAPACITY) {
@@ -30,12 +32,12 @@ final class TpsMeter implements Runnable {
 		ticks++;
 	}
 
-	int ticks() {
+	public synchronized int ticks() {
 		return ticks;
 	}
 
 	/** TPS over 1, 5 and 15 minutes, or {@code null} before the first two ticks. */
-	double[] tps() {
+	public synchronized double[] tps() {
 		if (count < 2) {
 			return null;
 		}

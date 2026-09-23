@@ -10,13 +10,15 @@ import fr.samflix.vaniametrics.api.Config;
 import fr.samflix.vaniametrics.api.VaniaMetrics;
 import fr.samflix.vaniametrics.core.Exporter;
 import fr.samflix.vaniametrics.core.game.GameEvents;
+import fr.samflix.vaniametrics.core.game.GameServer;
 import fr.samflix.vaniametrics.core.game.PlayerCollector;
 import fr.samflix.vaniametrics.core.game.TickCollector;
+import fr.samflix.vaniametrics.core.game.TpsMeter;
 import fr.samflix.vaniametrics.core.game.WorldCollector;
 
 /**
- * Entry point for the Bukkit family: CraftBukkit, Spigot, Paper, Purpur. One jar; what each server
- * can provide is detected at startup (see {@link BukkitGameServer}).
+ * Entry point for the Bukkit family: CraftBukkit, Spigot, Paper, Purpur, Folia. One jar; what each
+ * server can provide is detected at startup (see {@link ServerFlavor}).
  */
 public final class BukkitPlugin extends JavaPlugin {
 
@@ -30,12 +32,19 @@ public final class BukkitPlugin extends JavaPlugin {
 		Config config = Config.load(platform);
 		exporter = new Exporter(platform, config);
 
-		// Servers without their own TPS (CraftBukkit, Spigot) get ours, measured from the ticks.
+		// Servers without their own TPS (CraftBukkit, Spigot, Folia) get ours, measured from the
+		// ticks: the main thread's, or the global region's on Folia.
 		if (!flavor.tickApi()) {
 			tpsMeter = new TpsMeter();
-			Bukkit.getScheduler().runTaskTimer(this, tpsMeter, 1, 1);
+			if (flavor.folia()) {
+				Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, t -> tpsMeter.run(), 1, 1);
+			} else {
+				Bukkit.getScheduler().runTaskTimer(this, tpsMeter, 1, 1);
+			}
 		}
-		BukkitGameServer server = new BukkitGameServer(flavor, tpsMeter);
+		GameServer server = flavor.folia()
+				? new FoliaGameServer(this, flavor, tpsMeter)
+				: new BukkitGameServer(flavor, tpsMeter);
 
 		// Listeners are registered before the exporter starts, so events during startup are
 		// counted and the counters exist when the first scrape arrives.

@@ -71,7 +71,7 @@ final class BukkitPlatform implements Platform {
 
 	@Override
 	public void runOnMainThread(Runnable task) throws Exception {
-		if (Bukkit.isPrimaryThread()) {
+		if (!flavor.folia() && Bukkit.isPrimaryThread()) {
 			task.run();
 			return;
 		}
@@ -79,20 +79,32 @@ final class BukkitPlatform implements Platform {
 		// The timeout bounds the wait: a frozen server must not block the exporter forever,
 		// or the metric showing it is frozen would never arrive.
 		CompletableFuture<Void> done = new CompletableFuture<>();
-		Bukkit.getScheduler().runTask(plugin, () -> {
+		Runnable wrapped = () -> {
 			try {
 				task.run();
 				done.complete(null);
 			} catch (Throwable t) {
 				done.completeExceptionally(t);
 			}
-		});
+		};
+		if (flavor.folia()) {
+			// No main thread on Folia; the global region is the closest thing, and owns
+			// server-wide state. Region-bound data must be read by the caller on its own region.
+			Bukkit.getGlobalRegionScheduler().execute(plugin, wrapped);
+		} else {
+			Bukkit.getScheduler().runTask(plugin, wrapped);
+		}
 		done.get(5, TimeUnit.SECONDS);
 	}
 
 	@Override
 	public void scheduleRepeating(Runnable task, long intervalSeconds) {
-		long ticks = Math.max(1, intervalSeconds * 20);
-		Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, task, ticks, ticks);
+		long seconds = Math.max(1, intervalSeconds);
+		if (flavor.folia()) {
+			// Bukkit's scheduler throws on Folia.
+			Bukkit.getAsyncScheduler().runAtFixedRate(plugin, t -> task.run(), seconds, seconds, TimeUnit.SECONDS);
+		} else {
+			Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, task, seconds * 20, seconds * 20);
+		}
 	}
 }

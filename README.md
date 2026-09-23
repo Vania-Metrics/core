@@ -1,7 +1,17 @@
 # VaniaMetrics core
 
-The public API and the core plugin (Paper and Velocity) of VaniaMetrics, a Prometheus exporter
-for Minecraft servers. Gradle build, Java 21.
+The public API and the core plugin of VaniaMetrics, a Prometheus exporter for Minecraft servers.
+Gradle build, Java 21.
+
+| Loader | Jar | Tested on |
+|---|---|---|
+| CraftBukkit, Spigot, Paper, Purpur, Folia | `vania-metrics-bukkit` | Spigot, Paper, Purpur, Folia 1.21.11 |
+| Sponge (API 17) | `vania-metrics-sponge` | SpongeVanilla 1.21.10 |
+| Velocity | `vania-metrics-velocity` | Velocity 3.5 |
+
+One Bukkit jar covers the whole family: optional APIs (Paper's tick buffer and world counters,
+client brand) are probed at startup, and Folia gets region schedulers instead of the main thread.
+A metric a loader cannot provide is left out, never faked.
 
 ```sh
 ./gradlew build                  # everything
@@ -14,15 +24,17 @@ for Minecraft servers. Gradle build, Java 21.
 | Directory   | Gradle project           | Contents                                               |
 |-------------|--------------------------|--------------------------------------------------------|
 | `api/`      | `vania-metrics-api`      | the public API, JDK only, no dependencies              |
-| `common/`   | `vania-metrics-common`   | exporter, HTTP server, JVM/disk/cgroup collectors      |
-| `paper/`    | `vania-metrics-paper`    | the core, as a Bukkit plugin                           |
+| `common/`   | `vania-metrics-common`   | exporter, HTTP server, JVM/disk/cgroup collectors, and the game collectors (tick, worlds, players, events) behind a neutral `GameServer` interface |
+| `bukkit/`   | `vania-metrics-bukkit`   | the core, as a Bukkit/Spigot/Paper/Purpur/Folia plugin |
+| `sponge/`   | `vania-metrics-sponge`   | the core, as a Sponge plugin                           |
 | `velocity/` | `vania-metrics-velocity` | the core, as a Velocity plugin                         |
 
 ## Outputs
 
 ```
 api/build/libs/vania-metrics-api-<v>.jar
-paper/build/libs/vania-metrics-paper-<v>.jar         API + common bundled
+bukkit/build/libs/vania-metrics-bukkit-<v>.jar       API + common bundled
+sponge/build/libs/vania-metrics-sponge-<v>.jar       API + common bundled
 velocity/build/libs/vania-metrics-velocity-<v>.jar   API + common bundled
 ```
 

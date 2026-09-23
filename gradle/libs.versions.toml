@@ -19,10 +19,12 @@
 [versions]
 paper-api = "1.21.11-R0.1-20260511.115010-91"
 velocity-api = "3.5.1"
+sponge-api = "17.0.0"
 adventure = "4.26.1"
 
 [libraries]
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+sponge-api = { module = "org.spongepowered:spongeapi", version.ref = "sponge-api" }
 velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity-api" }
 adventure-api = { module = "net.kyori:adventure-api", version.ref = "adventure" }
 adventure-key = { module = "net.kyori:adventure-key", version.ref = "adventure" }

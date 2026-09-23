@@ -42,9 +42,7 @@ public final class TickCollector implements Collector {
 
 	@Override
 	public boolean needsMainThread() {
-		// Tick buffers are written by the server thread. Reading them from another thread gives
-		// half-written values: rarely, and so at the worst moment.
-		return true;
+		return server.needsMainThread();
 	}
 
 	@Override

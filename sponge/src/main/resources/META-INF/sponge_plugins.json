@@ -1,0 +1,36 @@
+{
+  "loader": {
+    "name": "java_plain",
+    "version": "1.0"
+  },
+  "license": "All Rights Reserved",
+  "global": {
+    "version": "${version}",
+    "links": {
+      "homepage": "https://github.com/Vania-Metrics",
+      "source": "https://github.com/Vania-Metrics/core",
+      "issues": "https://github.com/Vania-Metrics/core/issues"
+    },
+    "contributors": [
+      {
+        "name": "Vania-Metrics"
+      }
+    ],
+    "dependencies": [
+      {
+        "id": "spongeapi",
+        "version": "17.0.0",
+        "load-order": "after",
+        "optional": false
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "id": "vaniametrics",
+      "name": "VaniaMetrics",
+      "entrypoint": "fr.samflix.vaniametrics.sponge.SpongePlugin",
+      "description": "Exposes server metrics in the Prometheus format."
+    }
+  ]
+}

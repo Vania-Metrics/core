@@ -10,10 +10,16 @@ import java.util.List;
  * (see each method) and the matching metric is simply not published: a missing series is honest,
  * a zero is a lie.
  *
- * <p>Methods are called from the thread the collector asked for ({@code needsMainThread}), so an
- * implementation may read game state directly.
+ * <p>When {@link #needsMainThread()} is true, methods are called on the server thread and may read
+ * game state directly. Otherwise they are called from a background thread, and the implementation
+ * dispatches reads itself (Folia, which has no main thread).
  */
 public interface GameServer {
+
+	/** Whether collectors must call this server from the main thread. */
+	default boolean needsMainThread() {
+		return true;
+	}
 
 	int maxPlayers();
 

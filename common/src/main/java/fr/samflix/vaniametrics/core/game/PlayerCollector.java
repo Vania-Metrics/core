@@ -58,7 +58,7 @@ public final class PlayerCollector implements Collector {
 
 	@Override
 	public boolean needsMainThread() {
-		return true;
+		return server.needsMainThread();
 	}
 
 	@Override

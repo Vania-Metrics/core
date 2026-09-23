@@ -37,7 +37,7 @@ public final class WorldCollector implements Collector {
 
 	@Override
 	public boolean needsMainThread() {
-		return true;
+		return server.needsMainThread();
 	}
 
 	@Override
@@ -84,11 +84,15 @@ public final class WorldCollector implements Collector {
 
 		for (WorldSnapshot w : server.worlds(typeThreshold >= 0)) {
 			String name = w.name();
-			entities.set(w.entities(), name);
+			if (w.entities() >= 0) {
+				entities.set(w.entities(), name);
+			}
 			if (w.tileEntities() >= 0) {
 				tileEntities.set(w.tileEntities(), name);
 			}
-			chunks.set(w.chunks(), name);
+			if (w.chunks() >= 0) {
+				chunks.set(w.chunks(), name);
+			}
 			players.set(w.players(), name);
 			worldTime.set(w.fullTime(), name);
 			weather.set(w.weather(), name);

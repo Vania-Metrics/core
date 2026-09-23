@@ -17,28 +17,33 @@ import org.bukkit.entity.Player;
  * @param name lowercase implementation name: craftbukkit, spigot, paper, purpur...
  * @param tickApi Paper's TPS, average tick time and tick duration buffer
  * @param worldCounters Paper's O(1) entity, tile entity and chunk counters
+ * @param folia regionized threading: no main thread, region schedulers instead
  */
 record ServerFlavor(
 		String name,
 		boolean tickApi,
 		boolean worldCounters,
 		boolean clientBrand,
-		boolean localeObject) {
+		boolean localeObject,
+		boolean folia) {
 
 	static ServerFlavor detect() {
 		String name = Bukkit.getName().toLowerCase(Locale.ROOT);
 		if (name.equals("craftbukkit") && classExists("org.spigotmc.SpigotConfig")) {
 			name = "spigot";
 		}
+		boolean folia = classExists("io.papermc.paper.threadedregions.RegionizedServer");
 		Class<?> server = Bukkit.getServer().getClass();
 		return new ServerFlavor(
 				name,
-				methodExists(server, "getTickTimes") && methodExists(server, "getTPS"),
+				// Folia inherits these methods from paper-api but throws on them: no single tick.
+				!folia && methodExists(server, "getTickTimes") && methodExists(server, "getTPS"),
 				methodExists(World.class, "getEntityCount")
 						&& methodExists(World.class, "getTileEntityCount")
 						&& methodExists(World.class, "getChunkCount"),
 				methodExists(Player.class, "getClientBrandName"),
-				methodExists(Player.class, "locale"));
+				methodExists(Player.class, "locale"),
+				folia);
 	}
 
 	private static boolean classExists(String name) {

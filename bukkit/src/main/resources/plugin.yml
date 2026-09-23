@@ -7,3 +7,4 @@ main: fr.samflix.vaniametrics.bukkit.BukkitPlugin
 api-version: '1.21'
 authors: [mc-vania]
 description: Exposes server metrics in the Prometheus format.
+folia-supported: true

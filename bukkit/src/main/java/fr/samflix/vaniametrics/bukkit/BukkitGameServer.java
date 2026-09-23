@@ -15,8 +15,9 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 
 import fr.samflix.vaniametrics.core.game.GameServer;
-import fr.samflix.vaniametrics.core.game.PlayerSnapshot;
 import fr.samflix.vaniametrics.core.game.PlayerSnapshot.Stat;
+import fr.samflix.vaniametrics.core.game.PlayerSnapshot;
+import fr.samflix.vaniametrics.core.game.TpsMeter;
 import fr.samflix.vaniametrics.core.game.WorldSnapshot;
 
 /** {@link GameServer} over the Bukkit API, using Paper's extras only where the server has them. */
@@ -107,23 +108,28 @@ final class BukkitGameServer implements GameServer {
 	public List<PlayerSnapshot> players() {
 		List<PlayerSnapshot> result = new ArrayList<>();
 		for (Player p : Bukkit.getOnlinePlayers()) {
-			Map<Stat, Long> stats = new EnumMap<>(Stat.class);
-			stats.put(Stat.PLAYER_KILLS, stat(p, Statistic.PLAYER_KILLS));
-			stats.put(Stat.MOB_KILLS, stat(p, Statistic.MOB_KILLS));
-			stats.put(Stat.DEATHS, stat(p, Statistic.DEATHS));
-			stats.put(Stat.DAMAGE_DEALT, stat(p, Statistic.DAMAGE_DEALT));
-			stats.put(Stat.DAMAGE_TAKEN, stat(p, Statistic.DAMAGE_TAKEN));
-			stats.put(Stat.JUMPS, stat(p, Statistic.JUMP));
-			// PLAY_ONE_MINUTE counts ticks despite its name.
-			stats.put(Stat.PLAY_TICKS, stat(p, Statistic.PLAY_ONE_MINUTE));
-			result.add(new PlayerSnapshot(p.getUniqueId(), p.getName(), p.getPing(),
-					flavor.clientBrand() ? p.getClientBrandName() : null, locale(p), stats));
+			result.add(snapshot(p, flavor));
 		}
 		return result;
 	}
 
+	/** Reads one player. Must run on the thread that owns the player. */
+	static PlayerSnapshot snapshot(Player p, ServerFlavor flavor) {
+		Map<Stat, Long> stats = new EnumMap<>(Stat.class);
+		stats.put(Stat.PLAYER_KILLS, stat(p, Statistic.PLAYER_KILLS));
+		stats.put(Stat.MOB_KILLS, stat(p, Statistic.MOB_KILLS));
+		stats.put(Stat.DEATHS, stat(p, Statistic.DEATHS));
+		stats.put(Stat.DAMAGE_DEALT, stat(p, Statistic.DAMAGE_DEALT));
+		stats.put(Stat.DAMAGE_TAKEN, stat(p, Statistic.DAMAGE_TAKEN));
+		stats.put(Stat.JUMPS, stat(p, Statistic.JUMP));
+		// PLAY_ONE_MINUTE counts ticks despite its name.
+		stats.put(Stat.PLAY_TICKS, stat(p, Statistic.PLAY_ONE_MINUTE));
+		return new PlayerSnapshot(p.getUniqueId(), p.getName(), p.getPing(),
+				flavor.clientBrand() ? p.getClientBrandName() : null, locale(p, flavor), stats);
+	}
+
 	@SuppressWarnings("deprecation")
-	private String locale(Player p) {
+	private static String locale(Player p, ServerFlavor flavor) {
 		if (flavor.localeObject()) {
 			Locale l = p.locale();
 			return l == null ? null : l.toLanguageTag();
@@ -142,7 +148,7 @@ final class BukkitGameServer implements GameServer {
 		}
 	}
 
-	private static int weather(World world) {
+	static int weather(World world) {
 		if (world.isThundering()) {
 			return 2;
 		}
