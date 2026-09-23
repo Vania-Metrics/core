@@ -2,7 +2,7 @@
 #
 #   jobs:
 #     ci:
-#       uses: Vania-Metrics/core/.github/workflows/collector.yml@v0.5.0
+#       uses: Vania-Metrics/core/.github/workflows/collector.yml@v0.6.0
 #       with: { cells: blocking }
 #       secrets: { CORE_DEPLOY_KEY: "${{ secrets.VANIA_CORE_DEPLOY_KEY }}" }
 #
