@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(project(":vania-metrics-common"))
-    compileOnly(libs.paper.api)
+    compileOnly(libs.bundles.paper)
 }
 
 tasks.processResources {
