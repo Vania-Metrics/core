@@ -240,6 +240,15 @@ class ExporterTest {
 	}
 
 	@Test
+	void anIntervalBelowOneSecondIsRaisedToOne() throws Exception {
+		// Every loader but Velocity already refused 0; the exporter now guards them all.
+		start(List.of(new Probe("slow", true)), "collector.slow.interval", "0");
+		assertTrue(platform.scheduled.stream().noneMatch(s -> s.intervalSeconds() < 1),
+				platform.scheduled.toString());
+		assertTrue(platform.infos.contains("collector slow: background, every 1 s"));
+	}
+
+	@Test
 	void theConfiguredIntervalWins() throws Exception {
 		start(List.of(new Probe("slow", true)), "collector.slow.interval", "2");
 		assertTrue(platform.scheduled.stream().anyMatch(s -> s.intervalSeconds() == 2));

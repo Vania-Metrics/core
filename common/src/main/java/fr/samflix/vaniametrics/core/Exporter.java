@@ -95,7 +95,9 @@ public final class Exporter implements VaniaMetrics {
 		c.declare(registry);
 
 		if (c.isBackground()) {
-			long interval = config.getSeconds("collector." + c.name() + ".interval", c.intervalSeconds());
+			// At least a second: 0 or less would make some schedulers spin and others refuse.
+			long interval = Math.max(1,
+					config.getSeconds("collector." + c.name() + ".interval", c.intervalSeconds()));
 			lastCollection.put(c.name(), new AtomicLong(0));
 			// The flag is checked on every run: neither Bukkit nor Velocity offers a simple way to
 			// cancel a task from code that did not create it, and an unloaded collector must stop
