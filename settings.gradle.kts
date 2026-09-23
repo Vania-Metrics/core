@@ -69,7 +69,7 @@ dependencyResolutionManagement {
 // The project name is the Maven coordinate. A collector that includes this build (includeBuild)
 // depends on "fr.samflix:vania-metrics-api", and Gradle substitutes this project by name, not by
 // jar name. Hence the long project names and short directories.
-include("vania-metrics-api", "vania-metrics-common", "vania-metrics-bukkit", "vania-metrics-velocity", "vania-metrics-sponge", "vania-metrics-bungee", "vania-metrics-geyser")
+include("vania-metrics-api", "vania-metrics-common", "vania-metrics-bukkit", "vania-metrics-velocity", "vania-metrics-sponge", "vania-metrics-bungee", "vania-metrics-geyser", "vania-metrics-testkit")
 project(":vania-metrics-api").projectDir = file("api")
 project(":vania-metrics-common").projectDir = file("common")
 project(":vania-metrics-bukkit").projectDir = file("bukkit")
@@ -77,3 +77,4 @@ project(":vania-metrics-velocity").projectDir = file("velocity")
 project(":vania-metrics-sponge").projectDir = file("sponge")
 project(":vania-metrics-bungee").projectDir = file("bungee")
 project(":vania-metrics-geyser").projectDir = file("geyser")
+project(":vania-metrics-testkit").projectDir = file("testkit")

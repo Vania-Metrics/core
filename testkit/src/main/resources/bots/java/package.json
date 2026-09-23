@@ -1,0 +1,8 @@
+{
+  "name": "vania-metrics-java-bot",
+  "private": true,
+  "description": "A Minecraft Java client that joins, jumps and leaves: the player the integration tests need.",
+  "dependencies": {
+    "mineflayer": "4.39.0"
+  }
+}

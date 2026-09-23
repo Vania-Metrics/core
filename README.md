@@ -45,6 +45,29 @@ velocity/build/libs/vania-metrics-velocity-<v>.jar   API + common bundled
 The version is read from `api/.../Version.java`, never copied. Releases are tagged `vX.Y.Z`;
 that is the ref collectors pin.
 
+## Tests
+
+```sh
+./gradlew build                                        # unit tests, no server
+./gradlew :vania-metrics-testkit:integrationTest       # real servers, the platforms marked tested
+./gradlew :vania-metrics-testkit:integrationTestUntested   # the others: reported, not fatal
+./gradlew :vania-metrics-testkit:integrationTest -Pvania.it.platforms=paper,purpur
+```
+
+- **Unit tests** (`api`, `common`) run against fake servers. `common/src/test/resources/contract/`
+  pins every published family with its type and labels, per capability profile: a rename fails
+  the build. A deliberate change is recorded with `-Pvania.contract.update`, and the diff is what
+  gets reviewed.
+- **Integration tests** (`testkit`) start each platform of `compatibility.yml` in a container
+  (itzg images, pinned by digest), install the jar, let a bot join and leave, and check what
+  `/metrics` publishes, then that the server stops cleanly and its log holds no error of ours.
+  They need a Docker API: Docker, or Podman with its user socket (`DOCKER_HOST`). Results and logs
+  go to `testkit/build/vania-it/`.
+- **Collectors** run the same harness: `testkit/collector-it.gradle.kts` wires it into their
+  build, `collector-test.yml` says what to install besides the core.
+- **CI**: `build.yml` on every push (unit tests and Paper), `platforms.yml` monthly and by hand,
+  `collector.yml` called by every collector repository.
+
 ## Dependencies
 
 Versions live in `gradle/libs.versions.toml`. Gradle verifies every SHA-256 checksum against
