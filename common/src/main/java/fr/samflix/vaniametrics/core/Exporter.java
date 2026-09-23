@@ -56,6 +56,9 @@ public final class Exporter implements VaniaMetrics {
 	public Exporter(Platform platform, Config config) {
 		this.platform = platform;
 		this.config = config;
+		// Declared here rather than in start(): register() publishes into them, and the API lets a
+		// collector register before the core has started.
+		declareOwnMetrics();
 	}
 
 	@Override
@@ -137,8 +140,6 @@ public final class Exporter implements VaniaMetrics {
 
 	/** @param platformCollectors the platform-specific collectors, supplied by the adapter */
 	public void start(List<Collector> platformCollectors) throws Exception {
-		declareOwnMetrics();
-
 		// Core collectors run everywhere: the JVM, cgroup and disk have nothing Minecraft-specific,
 		// and leaving them out on the proxy would be an unexplained gap.
 		register(new JvmCollector());

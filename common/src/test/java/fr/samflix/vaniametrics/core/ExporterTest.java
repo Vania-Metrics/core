@@ -85,7 +85,7 @@ class ExporterTest {
 		}
 	}
 
-	private Exporter start(List<Collector> collectors, String... keyValues) throws Exception {
+	private Exporter create(String... keyValues) {
 		Properties p = new Properties();
 		p.setProperty("http.bind", "127.0.0.1");
 		p.setProperty("http.port", "0");
@@ -95,8 +95,24 @@ class ExporterTest {
 		}
 		platform = new FakePlatform(dataDirectory);
 		exporter = new Exporter(platform, Config.of(p, Map.of()));
-		exporter.start(collectors);
 		return exporter;
+	}
+
+	private Exporter start(List<Collector> collectors, String... keyValues) throws Exception {
+		create(keyValues).start(collectors);
+		return exporter;
+	}
+
+	@Test
+	void aCollectorRegisteredBeforeStartIsKept() throws Exception {
+		// The API promises that registration order does not matter.
+		Probe early = new Probe("early", false);
+		create().register(early);
+		exporter.start(List.of());
+		String text = exporter.scrape();
+		assertEquals(1, early.calls.get());
+		assertEquals(1, value(text,
+				"mc_exporter_collector_info{collector=\"early\",source=\"Probe\",mode=\"scrape\"}").orElseThrow());
 	}
 
 	@AfterEach
