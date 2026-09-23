@@ -1,0 +1,12 @@
+# Le NOYAU. Il ne connaît aucun plugin tiers — chaque intégration est un jar à part,
+# qui dépend de celui-ci et s'enregistre par l'API.
+#
+# AUCUN softdepend ICI, contrairement à la version précédente : c'est l'inverse qui
+# est vrai désormais. Ce sont les modules qui déclarent « depend: [VaniaMetrics] »,
+# et Bukkit en déduit l'ordre. Le noyau n'a aucune raison d'attendre qui que ce soit.
+name: VaniaMetrics
+version: ${version}
+main: fr.samflix.vaniametrics.paper.PaperPlugin
+api-version: '1.21'
+authors: [mc-vania]
+description: Expose les métriques du serveur au format Prometheus.
