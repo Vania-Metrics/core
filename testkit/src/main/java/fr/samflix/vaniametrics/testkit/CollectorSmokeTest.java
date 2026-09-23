@@ -194,6 +194,9 @@ public abstract class CollectorSmokeTest {
 
 	private static Map<String, String> gameEnv(Map<String, String> env, CollectorTestConfig config) {
 		Map<String, String> out = new LinkedHashMap<>(env);
+		if (!config.memory().isEmpty()) {
+			out.put("MEMORY", config.memory());
+		}
 		if (!config.jvmArgs().isEmpty()) {
 			out.put("JVM_OPTS", String.join(" ", config.jvmArgs()));
 		}

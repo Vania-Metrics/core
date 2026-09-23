@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
  * <pre>
  * collectors: [pregen]     # names in mc_exporter_collector_info, not the repository name
  * runtime: java21          # java21 | java25: the game server's Java
+ * memory: 3G               # the game server's heap, when 1G is not enough (Nova)
  * jvm-args: []             # extra JVM flags for the game server
  * env: {}                  # extra environment, e.g. VANIA_METRICS_COLLECTOR_PLACEHOLDER_LIST
  * plugins:                 # per family: bukkit | velocity | bungee; the first is the target
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
 public record CollectorTestConfig(
 		List<String> collectors,
 		String runtime,
+		String memory,
 		List<String> jvmArgs,
 		Map<String, String> env,
 		Map<String, List<Download>> plugins,
@@ -42,7 +44,7 @@ public record CollectorTestConfig(
 	}
 
 	private static final Set<String> KEYS =
-			Set.of("collectors", "runtime", "jvm-args", "env", "plugins", "per-platform", "allow-logs");
+			Set.of("collectors", "runtime", "memory", "jvm-args", "env", "plugins", "per-platform", "allow-logs");
 
 	public static CollectorTestConfig load(Path file) throws IOException {
 		Map<String, Object> root = Yamls.load(file);
@@ -58,6 +60,10 @@ public record CollectorTestConfig(
 		String runtime = root.getOrDefault("runtime", "java21").toString();
 		if (!runtime.equals("java21") && !runtime.equals("java25")) {
 			throw new IllegalArgumentException(file + ": runtime must be java21 or java25, not " + runtime);
+		}
+		String memory = root.getOrDefault("memory", "").toString();
+		if (!memory.isEmpty() && !memory.matches("\\d+[MG]")) {
+			throw new IllegalArgumentException(file + ": memory must look like 1536M or 3G, not " + memory);
 		}
 		Map<String, String> env = new LinkedHashMap<>();
 		if (root.get("env") instanceof Map<?, ?> m) {
@@ -77,7 +83,7 @@ public record CollectorTestConfig(
 			});
 		}
 		List<Pattern> allow = strings(root.get("allow-logs")).stream().map(Pattern::compile).toList();
-		return new CollectorTestConfig(collectors, runtime, strings(root.get("jvm-args")), env, plugins,
+		return new CollectorTestConfig(collectors, runtime, memory, strings(root.get("jvm-args")), env, plugins,
 				perPlatform, allow);
 	}
 
