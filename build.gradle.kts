@@ -3,8 +3,8 @@
 // Outputs (./gradlew build):
 //   api/build/libs/vania-metrics-api-<v>.jar           the public API, the only thing a
 //                                                      collector author compiles against
-//   paper/build/libs/VaniaMetrics-<v>-paper.jar        the core, as a Bukkit plugin
-//   velocity/build/libs/VaniaMetrics-<v>-velocity.jar  the core, as a Velocity plugin
+//   paper/build/libs/vania-metrics-paper-<v>.jar        the core, as a Bukkit plugin
+//   velocity/build/libs/vania-metrics-velocity-<v>.jar  the core, as a Velocity plugin
 //
 // No runtime dependencies. The registry, the exposition format and the HTTP server are written
 // here on the JDK alone: nothing to relocate, nothing to shade. Plugin jars contain the API and

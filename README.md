@@ -22,8 +22,8 @@ for Minecraft servers. Gradle build, Java 21.
 
 ```
 api/build/libs/vania-metrics-api-<v>.jar
-paper/build/libs/VaniaMetrics-<v>-paper.jar         API + common bundled
-velocity/build/libs/VaniaMetrics-<v>-velocity.jar   API + common bundled
+paper/build/libs/vania-metrics-paper-<v>.jar         API + common bundled
+velocity/build/libs/vania-metrics-velocity-<v>.jar   API + common bundled
 ```
 
 The version is read from `api/.../Version.java`, never copied. Releases are tagged `vX.Y.Z`;
@@ -40,6 +40,6 @@ Versions live in `gradle/libs.versions.toml`. Gradle verifies every SHA-256 chec
 
 ## Collectors
 
-Each collector lives in its own repository (`Vania-Metrics/colecteur-<name>`) and includes this
+Each collector lives in its own repository (`Vania-Metrics/collector-<name>`) and includes this
 repository as a composite build, checked out at a tag: it depends on
 `fr.samflix:vania-metrics-api`, which Gradle substitutes with the `api/` project.

@@ -11,7 +11,7 @@ dependencies {
 
 // A plugin is a self-contained jar: the API and the common core are unpacked into it.
 tasks.jar {
-    archiveFileName = "VaniaMetrics-$version-velocity.jar"
+    archiveFileName = "vania-metrics-velocity-$version.jar"
     dependsOn(configurations.runtimeClasspath)
     from(configurations.runtimeClasspath.map { cp -> cp.map { zipTree(it) } })
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
