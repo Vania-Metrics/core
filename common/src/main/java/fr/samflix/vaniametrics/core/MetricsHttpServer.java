@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
@@ -33,6 +34,7 @@ final class MetricsHttpServer {
 	private final Supplier<String> scrape;
 
 	private HttpServer server;
+	private ExecutorService executor;
 
 	MetricsHttpServer(Platform platform, Config config, Supplier<String> scrape) {
 		this.platform = platform;
@@ -50,11 +52,12 @@ final class MetricsHttpServer {
 		server.createContext(path, e -> handle(e, token));
 		// A free liveness endpoint, for a Kubernetes probe.
 		server.createContext("/healthz", e -> write(e, 200, "ok\n", PLAIN_TEXT));
-		server.setExecutor(Executors.newFixedThreadPool(2, r -> {
+		executor = Executors.newFixedThreadPool(2, r -> {
 			Thread t = new Thread(r, "vania-metrics-http");
 			t.setDaemon(true);
 			return t;
-		}));
+		});
+		server.setExecutor(executor);
 		server.start();
 		platform.info("serving metrics on http://" + bind + ":" + port() + path
 				+ (token.isEmpty() ? "" : " (token required)"));
@@ -70,6 +73,11 @@ final class MetricsHttpServer {
 			// No grace period: an in-flight scrape is lost, and Prometheus retries on the next
 			// interval.
 			server.stop(0);
+		}
+		if (executor != null) {
+			// HttpServer.stop() leaves the executor to its owner. Without this its threads outlive
+			// the plugin, and a reload adds two more each time.
+			executor.shutdownNow();
 		}
 	}
 

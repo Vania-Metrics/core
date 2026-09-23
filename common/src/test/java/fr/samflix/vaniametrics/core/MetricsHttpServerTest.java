@@ -10,7 +10,9 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -94,6 +96,32 @@ class MetricsHttpServerTest {
 		assertEquals(401, send(get("/metrics")).statusCode());
 		assertEquals(401, send(get("/metrics").header("Authorization", "Bearer wrong")).statusCode());
 		assertEquals(200, send(get("/metrics").header("Authorization", "Bearer s3cret")).statusCode());
+	}
+
+	private static Set<Thread> httpThreads() {
+		return Thread.getAllStackTraces().keySet().stream()
+				.filter(t -> t.getName().equals("vania-metrics-http") && t.isAlive())
+				.collect(Collectors.toSet());
+	}
+
+	@Test
+	void stopReleasesTheHttpThreads() throws Exception {
+		// A reload disables and re-enables the plugin: threads left behind pile up each time.
+		Set<Thread> before = httpThreads();
+		start(() -> "x 1\n");
+		assertEquals(200, send(get("/metrics")).statusCode());
+		server.stop();
+		server = null;
+
+		long deadline = System.nanoTime() + 5_000_000_000L;
+		Set<Thread> left = httpThreads();
+		left.removeAll(before);
+		while (!left.isEmpty() && System.nanoTime() < deadline) {
+			Thread.sleep(50);
+			left = httpThreads();
+			left.removeAll(before);
+		}
+		assertEquals(Set.of(), left);
 	}
 
 	@Test
