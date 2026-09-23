@@ -36,7 +36,7 @@ public final class Images {
 	public static final DockerImageName TEMURIN21 = DockerImageName.parse(
 			"public.ecr.aws/docker/library/eclipse-temurin@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29c525d58bf5e02e91b0f");
 
-	/** node, tag 24-bookworm-slim: the bots. Debian, because raknet-native ships glibc builds. */
+	/** node, tag 24-bookworm-slim: the bots. Debian: the Bedrock bot compiles raknet-native there. */
 	public static final DockerImageName NODE24 = DockerImageName.parse(
 			"public.ecr.aws/docker/library/node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6");
 

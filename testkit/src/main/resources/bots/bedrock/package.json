@@ -1,0 +1,8 @@
+{
+  "name": "vania-metrics-bedrock-bot",
+  "private": true,
+  "description": "A Bedrock client that joins through Geyser, stays a while and leaves.",
+  "dependencies": {
+    "bedrock-protocol": "3.60.1"
+  }
+}

@@ -1,0 +1,24 @@
+# Test proxy for the VaniaMetrics testkit: offline, no IP forwarding, one backend.
+# BungeeCord and Waterfall fill every other key with their defaults. Copied to /config, which the
+# image syncs to /server.
+online_mode: false
+ip_forward: false
+servers:
+  lobby:
+    motd: lobby
+    address: lobby:25565
+    restricted: false
+listeners:
+- host: 0.0.0.0:25577
+  motd: VaniaMetrics test proxy
+  max_players: 20
+  priorities:
+  - lobby
+  force_default_server: false
+  query_enabled: false
+  query_port: 25577
+  forced_hosts: {}
+  tab_list: GLOBAL_PING
+  bind_local_address: true
+  ping_passthrough: false
+  proxy_protocol: false

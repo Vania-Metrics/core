@@ -86,7 +86,7 @@ public abstract class CollectorSmokeTest {
 			for (Variant v : variants) {
 				ServerContainer[] started = new ServerContainer[1];
 				cells.add(Report.cell(v.name(), v.exploratory() ? "exploratory" : claim,
-						() -> started[0] == null ? v.build() : started[0].build(),
+						() -> started[0] == null || started[0].build() == null ? v.build() : started[0].build(),
 						() -> run(v, manifest, config, started)));
 			}
 		}
@@ -114,7 +114,8 @@ public abstract class CollectorSmokeTest {
 
 	private void run(Variant v, Manifest manifest, CollectorTestConfig config, ServerContainer[] started)
 			throws Exception {
-		if (v.loader().family != Loader.Family.BUKKIT) {
+		Loader.Family family = v.loader().family;
+		if (family != Loader.Family.BUKKIT && family != Loader.Family.VELOCITY && family != Loader.Family.BUNGEE) {
 			throw new TestAbortedException("no collector scenario for " + v.loader() + " yet");
 		}
 		// Downloads first: a bad digest fails here, before any container starts.
@@ -124,7 +125,7 @@ public abstract class CollectorSmokeTest {
 		checkTargetVersion(manifest, v, targets);
 
 		List<Path> jars = new ArrayList<>();
-		jars.add(Harness.jar(v.loader().family.coreJar()));
+		jars.add(Harness.jar(family.coreJar()));
 		jars.add(collectorJar());
 		jars.addAll(targets);
 
@@ -133,15 +134,23 @@ public abstract class CollectorSmokeTest {
 			env.put("VANIA_METRICS_COLLECTOR_" + name.toUpperCase(Locale.ROOT) + "_INTERVAL",
 					String.valueOf(INTERVAL_SECONDS));
 		}
-		if (!config.jvmArgs().isEmpty()) {
-			env.put("JVM_OPTS", String.join(" ", config.jvmArgs()));
-		}
-		DockerImageName image = config.runtime().equals("java25") ? Images.SERVER_JAVA25 : Images.SERVER_JAVA21;
+		String cell = Harness.projectDir().toAbsolutePath().normalize().getFileName() + "-" + v.name();
 
 		try (Network network = Network.newNetwork();
-				ServerContainer server = ServerContainer.game(v, image, jars, env, network, "lobby",
-						Harness.projectDir().toAbsolutePath().normalize().getFileName() + "-" + v.name())) {
+				ServerContainer backend = family.isProxy()
+						? ServerContainer.game(Variant.of(Loader.PAPER).get(0), Images.SERVER_JAVA21, List.of(),
+								Map.of(), network, "lobby", cell + "-lobby")
+						: null;
+				ServerContainer server = family.isProxy()
+						? ServerContainer.proxy(v, jars, env, network, "proxy", cell)
+						: ServerContainer.game(v, gameImage(config), jars, gameEnv(env, config), network, "lobby",
+								cell)) {
 			started[0] = server;
+			if (backend != null) {
+				// A proxy without a backend runs, but a collector reading its players or servers
+				// would then only ever see empty lists.
+				backend.startServer();
+			}
 			server.start();
 			MetricsEndpoint metrics = server.metrics();
 
@@ -159,17 +168,36 @@ public abstract class CollectorSmokeTest {
 			assertEquals(errorsBefore, errors(later, config.collectors()),
 					"collection errors after startup:\n" + later.excerpt("mc_exporter_scrape_errors_total"));
 
-			assertEquals(0, server.stopGracefully(), "exit code of the server");
+			long code = server.stopGracefully();
+			// A proxy may exit on the signal itself (143) once its shutdown hooks ran; the log says
+			// whether the plugins were disabled cleanly.
+			assertTrue(code == 0 || (family.isProxy() && (code == 130 || code == 143)),
+					"exit code of the server: " + code);
 			String log = LogAudit.clean(server.log());
 			assertTrue(log.contains("serving metrics on http://"), "the core never started serving");
-			for (String c : config.collectors()) {
-				assertTrue(log.contains("collector " + c + ": unregistered"),
-						"collector " + c + " was not unregistered on shutdown");
+			if (v.loader().disablesPluginsOnStop()) {
+				for (String c : config.collectors()) {
+					assertTrue(log.contains("collector " + c + ": unregistered"),
+							"collector " + c + " was not unregistered on shutdown");
+				}
 			}
 			List<Pattern> allowed = new ArrayList<>(config.allowLogs());
 			allowed.add(Pattern.compile(Pattern.quote(LogAudit.STARTUP_TIMEOUT)));
 			assertEquals(List.of(), LogAudit.findings(server.log(), allowed), "log findings");
 		}
+	}
+
+	/** A game server runs on the Java the collector's target needs; itzg picks it by image. */
+	private static DockerImageName gameImage(CollectorTestConfig config) {
+		return config.runtime().equals("java25") ? Images.SERVER_JAVA25 : Images.SERVER_JAVA21;
+	}
+
+	private static Map<String, String> gameEnv(Map<String, String> env, CollectorTestConfig config) {
+		Map<String, String> out = new LinkedHashMap<>(env);
+		if (!config.jvmArgs().isEmpty()) {
+			out.put("JVM_OPTS", String.join(" ", config.jvmArgs()));
+		}
+		return out;
 	}
 
 	private static Path collectorJar() {

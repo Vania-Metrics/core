@@ -48,6 +48,26 @@ public enum Loader {
 		return name().toLowerCase(Locale.ROOT);
 	}
 
+	/**
+	 * Whether a stop signal makes this loader disable its plugins.
+	 *
+	 * <p>Two do not. Waterfall (end of life) exits on SIGTERM without running its shutdown: no
+	 * plugin is disabled, ours or anyone's; BungeeCord, on the same code base and the same jar of
+	 * ours, does, and the disable path is checked there. Geyser Standalone exits the same way,
+	 * without shutting its extensions down.
+	 */
+	public boolean disablesPluginsOnStop() {
+		return this != WATERFALL && this != GEYSER;
+	}
+
+	/**
+	 * The {@code platform} label the core publishes in {@code mc_build_info} on this loader: the
+	 * server's own name, which for plain Bukkit is CraftBukkit's.
+	 */
+	public String platformLabel() {
+		return this == BUKKIT ? "craftbukkit" : key();
+	}
+
 	public static Optional<Loader> byKey(String key) {
 		return Arrays.stream(values()).filter(l -> l.key().equals(key)).findFirst();
 	}

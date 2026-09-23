@@ -1,0 +1,24 @@
+# What an idle Geyser Standalone publishes with the extension, once the proxy collector ran.
+# Geyser reports no backend of its own: no mc_proxy_backend_*. + must be there, - must not;
+# mc_host_* are left out.
++mc_build_info
++mc_exporter_background_task_age_seconds
++mc_exporter_collector_duration_seconds
++mc_exporter_collector_info
++mc_exporter_up
++mc_jvm_buffer_pool_bytes
++mc_jvm_classes_loaded
++mc_jvm_gc_collections_total
++mc_jvm_gc_seconds_total
++mc_jvm_memory_bytes
++mc_jvm_memory_pool_bytes
++mc_jvm_threads
++mc_jvm_threads_deadlocked
++mc_jvm_uptime_seconds
++mc_proxy_players_online
++mc_bedrock_players_linked
+-mc_proxy_backend_up
+-mc_exporter_scrape_errors_total
+-mc_bedrock_players_by_device
+-mc_proxy_connections_total
+-mc_server_players_online

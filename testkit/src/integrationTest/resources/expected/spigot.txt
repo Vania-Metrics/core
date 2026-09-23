@@ -1,0 +1,37 @@
+# What an idle Spigot server publishes once the background collectors have run.
+# No Paper API: TPS comes from our own meter, and there is no tick time to read, so no average
+# and no per-tick durations. + must be there, - must not; mc_host_* are left out.
++mc_build_info
++mc_exporter_background_task_age_seconds
++mc_exporter_collector_duration_seconds
++mc_exporter_collector_info
++mc_exporter_player_series_dropped
++mc_exporter_scrape_duration_seconds
++mc_exporter_up
++mc_jvm_buffer_pool_bytes
++mc_jvm_classes_loaded
++mc_jvm_gc_collections_total
++mc_jvm_gc_seconds_total
++mc_jvm_memory_bytes
++mc_jvm_memory_pool_bytes
++mc_jvm_threads
++mc_jvm_threads_deadlocked
++mc_jvm_uptime_seconds
++mc_server_player_statistics
++mc_server_players_max
++mc_server_players_online
++mc_server_playtime_seconds_total
+-mc_server_tick_average_seconds
+-mc_server_tick_duration_seconds
++mc_server_ticks_total
++mc_server_tps
++mc_world_chunks_loaded
++mc_world_entities
++mc_world_players
++mc_world_tile_entities
++mc_world_time_ticks
++mc_world_weather
+-mc_exporter_scrape_errors_total
+-mc_server_players_by_brand
+-mc_server_player_ping_seconds
+-mc_server_connections_total

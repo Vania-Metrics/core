@@ -30,14 +30,18 @@ import com.github.dockerjava.api.DockerClient;
  *
  * <p>Stopping is the other half of the test. {@link GenericContainer#stop()} kills the process,
  * which would hide a plugin that fails while disabling; {@link #stopGracefully()} sends SIGTERM,
- * which the image turns into a {@code stop} command, and waits for the server to exit on its own.
+ * which the image turns into a stop command, and waits for the server to exit on its own.
  */
 public final class ServerContainer implements AutoCloseable {
 
 	/** The plugin's metrics port inside the container. */
 	public static final int METRICS_PORT = 9940;
-	/** The Minecraft port inside the container. */
+	/** The Minecraft port of a game server inside the container. */
 	public static final int GAME_PORT = 25565;
+	/** The Minecraft port of a proxy inside the container. */
+	public static final int PROXY_PORT = 25577;
+	/** Geyser's Bedrock port (UDP) inside the container. */
+	public static final int BEDROCK_PORT = 19132;
 
 	private static final Pattern[] BUILD_LINES = {
 		Pattern.compile("This server is running (.+?) \\(Implementing"),
@@ -45,7 +49,6 @@ public final class ServerContainer implements AutoCloseable {
 		Pattern.compile("Booting up (Velocity \\S+)"),
 		Pattern.compile("Enabled (\\S+ version \\S+)"),
 		Pattern.compile("Loading (Geyser version \\S+)"),
-		Pattern.compile("(spongevanilla-\\S+?)(?:-universal)?\\.jar"),
 	};
 
 	private final GenericContainer<?> container;
@@ -59,8 +62,9 @@ public final class ServerContainer implements AutoCloseable {
 	}
 
 	/**
-	 * A Bukkit-family game server from the itzg image: Paper, Purpur, Folia.
+	 * A game server from the itzg image: every Bukkit fork, and Sponge.
 	 *
+	 * @param image the itzg image, which fixes the Java version
 	 * @param plugins jars to install
 	 * @param env extra environment, e.g. {@code VANIA_METRICS_*} settings
 	 * @param cell a name for the log file
@@ -72,13 +76,63 @@ public final class ServerContainer implements AutoCloseable {
 		all.putAll(env);
 		GenericContainer<?> c = new GenericContainer<>(image)
 				.withEnv(all)
-				.withExposedPorts(METRICS_PORT, GAME_PORT)
-				.withNetwork(network)
+				.withExposedPorts(METRICS_PORT, GAME_PORT);
+		return common(c, variant, plugins, network, alias, cell);
+	}
+
+	/** A proxy from the itzg mc-proxy image: Velocity, BungeeCord, Waterfall. */
+	public static ServerContainer proxy(Variant variant, List<Path> plugins, Map<String, String> env,
+			Network network, String alias, String cell) {
+		Map<String, String> all = new HashMap<>();
+		all.put("MEMORY", "512m");
+		all.put("VANIA_METRICS_COLLECTOR_PROXY_INTERVAL", "2");
+		all.put("VANIA_METRICS_COLLECTOR_PROXY_PING_TIMEOUT", "2");
+		all.put("VANIA_METRICS_COLLECTOR_DISK_INTERVAL", "5");
+		all.putAll(variant.env());
+		all.putAll(env);
+		GenericContainer<?> c = new GenericContainer<>(variant.java() >= 25 ? Images.PROXY_JAVA25 : Images.PROXY_JAVA21)
+				.withEnv(all)
+				.withExposedPorts(METRICS_PORT, PROXY_PORT);
+		return common(c, variant, plugins, network, alias, cell);
+	}
+
+	/**
+	 * Geyser Standalone on a plain JRE: no image runs it. Extensions go to {@code extensions/};
+	 * Bedrock is UDP, which Testcontainers cannot map: bots join over the containers' network.
+	 */
+	public static ServerContainer geyser(Variant variant, List<Path> extensions, Map<String, String> env,
+			Network network, String alias, String cell) {
+		Map<String, String> all = new HashMap<>();
+		all.put("VANIA_METRICS_COLLECTOR_PROXY_INTERVAL", "2");
+		all.put("VANIA_METRICS_COLLECTOR_DISK_INTERVAL", "5");
+		all.putAll(env);
+		GenericContainer<?> c = new GenericContainer<>(Images.TEMURIN21)
+				.withEnv(all)
+				.withWorkingDirectory("/data")
+				.withCommand("java", "-Xmx512m", "-XX:TieredStopAtLevel=1", "-jar",
+						"/server-jars/" + variant.serverJar().fileName(), "--nogui")
+				.withExposedPorts(METRICS_PORT);
+		return common(c, variant, extensions, "/data/extensions", network, alias, cell);
+	}
+
+	private static ServerContainer common(GenericContainer<?> c, Variant variant, List<Path> plugins,
+			Network network, String alias, String cell) {
+		return common(c, variant, plugins, "/plugins", network, alias, cell);
+	}
+
+	private static ServerContainer common(GenericContainer<?> c, Variant variant, List<Path> plugins,
+			String pluginDir, Network network, String alias, String cell) {
+		c.withNetwork(network)
 				.withNetworkAliases(alias)
-				.waitingFor(Wait.forLogMessage("(?s).*Done \\(.*", 1)
-						.withStartupTimeout(Duration.ofMinutes(8)));
+				.waitingFor(Wait.forLogMessage(variant.ready(), 1).withStartupTimeout(Duration.ofMinutes(8)));
 		for (Path jar : plugins) {
-			c.withCopyFileToContainer(MountableFile.forHostPath(jar, 0644), "/plugins/" + jar.getFileName());
+			c.withCopyFileToContainer(MountableFile.forHostPath(jar, 0644), pluginDir + "/" + jar.getFileName());
+		}
+		variant.files().forEach((resource, path) ->
+				c.withCopyFileToContainer(MountableFile.forClasspathResource(resource, 0644), path));
+		if (variant.serverJar() != null) {
+			c.withCopyFileToContainer(MountableFile.forHostPath(variant.serverJar().source().get(), 0644),
+					"/server-jars/" + variant.serverJar().fileName());
 		}
 		return new ServerContainer(c, logFile(cell));
 	}
@@ -107,8 +161,20 @@ public final class ServerContainer implements AutoCloseable {
 		return Harness.reports().resolve("logs").resolve(cell.replaceAll("[^A-Za-z0-9._-]", "_") + ".log");
 	}
 
-	/** Starts the container and waits until the server says it is done and the plugin answers. */
+	/** Starts the container and waits until the server is up and the plugin answers. */
 	public ServerContainer start() {
+		startServer();
+		try {
+			metrics().awaitStatus("/healthz", Duration.ofSeconds(60));
+		} catch (AssertionError e) {
+			throw new AssertionError(e.getMessage() + ": the server started but the plugin is not serving "
+					+ "(not installed, or failed to enable). Last log lines:\n" + tail(container.getLogs(), 40), e);
+		}
+		return this;
+	}
+
+	/** Starts a server that runs no plugin of ours: a proxy's backend. */
+	public ServerContainer startServer() {
 		try {
 			Files.writeString(logFile, "", StandardCharsets.UTF_8);
 		} catch (IOException e) {
@@ -122,14 +188,20 @@ public final class ServerContainer implements AutoCloseable {
 				// A lost log line must not fail the test; the final log is read again on stop.
 			}
 		});
-		container.start();
-		try {
-			metrics().awaitStatus("/healthz", Duration.ofSeconds(60));
-		} catch (AssertionError e) {
-			throw new AssertionError(e.getMessage() + ": the server started but the plugin is not serving "
-					+ "(not installed, or failed to enable). Last log lines:\n" + tail(container.getLogs(), 40), e);
-		}
+		Containers.start(container);
 		return this;
+	}
+
+	/**
+	 * The port the server says it listens on. The proxy image decides it, not our config:
+	 * mc-proxy starts Velocity on 25565 whatever velocity.toml says, BungeeCord on 25577.
+	 */
+	public int listeningPort() {
+		Matcher m = Pattern.compile("Listening on /\\S*:(\\d+)").matcher(LogAudit.clean(log()));
+		if (!m.find()) {
+			throw new AssertionError("the log never says which port the server listens on");
+		}
+		return Integer.parseInt(m.group(1));
 	}
 
 	private static String tail(String log, int lines) {
@@ -143,10 +215,13 @@ public final class ServerContainer implements AutoCloseable {
 
 	/** The log up to now. */
 	public String log() {
-		return finalLog != null ? finalLog : container.getLogs();
+		return finalLog != null ? finalLog : Containers.call(container::getLogs);
 	}
 
-	/** The server build as the log states it, for the report. */
+	/**
+	 * The server build as the log states it, for the report, or null when the log does not say
+	 * (Sponge): the pinned build then stands for it.
+	 */
 	public String build() {
 		String log = LogAudit.clean(log());
 		for (Pattern p : BUILD_LINES) {
@@ -155,7 +230,7 @@ public final class ServerContainer implements AutoCloseable {
 				return m.group(1).trim();
 			}
 		}
-		return "?";
+		return null;
 	}
 
 	/**
@@ -169,10 +244,10 @@ public final class ServerContainer implements AutoCloseable {
 		}
 		DockerClient docker = container.getDockerClient();
 		String id = container.getContainerId();
-		docker.stopContainerCmd(id).withTimeout(90).exec();
-		Long code = docker.inspectContainerCmd(id).exec().getState().getExitCodeLong();
+		Containers.call(() -> docker.stopContainerCmd(id).withTimeout(90).exec());
+		Long code = Containers.call(() -> docker.inspectContainerCmd(id).exec()).getState().getExitCodeLong();
 		exitCode = code == null ? -1 : code;
-		finalLog = container.getLogs();
+		finalLog = Containers.call(container::getLogs);
 		try {
 			Files.writeString(logFile, finalLog, StandardCharsets.UTF_8);
 		} catch (IOException e) {
@@ -186,11 +261,11 @@ public final class ServerContainer implements AutoCloseable {
 		if (finalLog == null && container.getContainerId() != null) {
 			// Kept for the report, which reads the build from it once the container is gone.
 			try {
-				finalLog = container.getLogs();
+				finalLog = Containers.call(container::getLogs);
 			} catch (RuntimeException e) {
 				finalLog = "";
 			}
 		}
-		container.stop();
+		Containers.remove(container);
 	}
 }
