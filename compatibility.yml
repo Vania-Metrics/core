@@ -1,0 +1,15 @@
+# Where the VaniaMetrics core runs. "tested" = smoke-tested on a real server:
+# plugin enabled, /metrics served, a connected player seen, clean shutdown.
+minecraft: 1.21.11
+version: 0.4.0
+platforms:
+  paper:      { jar: vania-metrics-bukkit,   status: tested, on: "Paper 1.21.11-132" }
+  spigot:     { jar: vania-metrics-bukkit,   status: tested, on: "Spigot 1.21.11 (4598)" }
+  bukkit:     { jar: vania-metrics-bukkit,   status: untested, note: "same code path as Spigot" }
+  folia:      { jar: vania-metrics-bukkit,   status: tested, on: "Folia 1.21.11-14" }
+  purpur:     { jar: vania-metrics-bukkit,   status: tested, on: "Purpur 1.21.11-2568", note: "without a player" }
+  sponge:     { jar: vania-metrics-sponge,   status: tested, on: "SpongeVanilla 1.21.10-17.0.0", note: "no Sponge build for 1.21.11" }
+  bungeecord: { jar: vania-metrics-bungee,   status: tested, on: "BungeeCord build 2096" }
+  geyser:     { jar: vania-metrics-geyser,   status: tested, on: "Geyser Standalone 2.11.3", note: "extension; without a Bedrock client" }
+  velocity:   { jar: vania-metrics-velocity, status: tested, on: "Velocity 4.2.1" }
+  waterfall:  { jar: vania-metrics-bungee,   status: tested, on: "Waterfall build 615 (end of life)" }
