@@ -119,7 +119,8 @@ public final class MetricRegistry {
 	 */
 	private static void checkDomain(String name) {
 		int sep = name.indexOf('_');
-		String domain = sep < 0 ? name : name.substring(0, sep);
+		// A domain alone ("server") names nothing: the subject is part of the convention too.
+		String domain = sep < 0 || sep == name.length() - 1 ? "" : name.substring(0, sep);
 		if (!DOMAINS.contains(domain)) {
 			throw new IllegalArgumentException(
 					"'" + name + "' has no known domain. Expected mc_<domain>_<subject>, "

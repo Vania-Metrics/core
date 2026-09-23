@@ -23,6 +23,11 @@ class MetricRegistryTest {
 	}
 
 	@Test
+	void aNameWithoutSeparatorIsRefused() {
+		assertThrows(IllegalArgumentException.class, () -> registry.gauge("server", "help"));
+	}
+
+	@Test
 	void aCounterMustEndInTotal() {
 		assertThrows(IllegalArgumentException.class,
 				() -> registry.counter("server_deaths", "help"));
