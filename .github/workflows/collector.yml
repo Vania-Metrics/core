@@ -1,0 +1,94 @@
+# Called by every collector repository (its .github/workflows/ci.yml):
+#
+#   jobs:
+#     ci:
+#       uses: Vania-Metrics/core/.github/workflows/collector.yml@v0.5.0
+#       with: { cells: blocking }
+#       secrets: { CORE_DEPLOY_KEY: "${{ secrets.VANIA_CORE_DEPLOY_KEY }}" }
+#
+# Builds the collector against the core it pins (vaniaCore.ref), then runs it on real servers:
+# the platforms its compatibility.yml says work (cells: blocking), or all of them (cells: all),
+# one after the other in this single job.
+name: collector
+
+on:
+  workflow_call:
+    inputs:
+      cells:
+        description: 'blocking: the platforms marked yes; all: the untested ones too'
+        type: string
+        default: blocking
+      platforms:
+        description: 'Comma-separated platforms, empty for all'
+        type: string
+        default: ''
+    secrets:
+      CORE_DEPLOY_KEY:
+        description: 'Read-only deploy key of Vania-Metrics/core'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TESTCONTAINERS_RYUK_DISABLED: "true"
+
+jobs:
+  collector:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # One core version per collector, written in three places: the build, this call, the
+      # manifest. They must agree, or the jar tested is not the one the manifest describes.
+      - name: Core version
+        id: core
+        run: |
+          ref=$(sed -n 's/^vaniaCore\.ref=//p' gradle.properties)
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          if ! grep -Eq "Vania-Metrics/core/\.github/workflows/collector\.yml@${ref}([[:space:]]|$)" .github/workflows/*.yml; then
+            echo "::error::gradle.properties pins core $ref, but the workflow calls collector.yml at another ref"
+            exit 1
+          fi
+          manifest=$(sed -n 's/^core:[[:space:]]*//p' compatibility.yml | tr -d '"'"'"' ')
+          if [ "$manifest" != "$ref" ]; then
+            echo "::error::gradle.properties pins core $ref, but compatibility.yml says core: $manifest"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Vania-Metrics/core
+          ref: ${{ steps.core.outputs.ref }}
+          path: .core
+          ssh-key: ${{ secrets.CORE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/vania-metrics
+          key: vania-it-${{ hashFiles('collector-test.yml', '.core/testkit/src/main/java/**/Variant.java') }}
+          restore-keys: vania-it-
+      - name: Build and real servers
+        run: >
+          ./gradlew --continue -PvaniaCore.dir=.core
+          build integrationTest ${{ inputs.cells == 'all' && 'integrationTestUntested' || '' }}
+          "-Pvania.it.platforms=${{ inputs.platforms }}"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && github.ref == 'refs/heads/main'
+        with:
+          path: ~/.cache/vania-metrics
+          key: vania-it-${{ hashFiles('collector-test.yml', '.core/testkit/src/main/java/**/Variant.java') }}
+      - name: Summary
+        if: always()
+        run: cat build/vania-it/results-*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs
+          path: build/vania-it/
+          retention-days: 5
