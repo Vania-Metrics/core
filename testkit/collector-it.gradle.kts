@@ -68,7 +68,7 @@ fun Test.cells(status: String) {
     systemProperty("vania.it.reports", layout.buildDirectory.dir("vania-it").get().asFile.path)
     // Real servers, not cached results: rerun every time.
     outputs.upToDateWhen { false }
-    timeout = Duration.ofMinutes(40)
+    timeout = Duration.ofMinutes(60)
     // One server at a time: a CI runner has two cores.
     maxParallelForks = 1
     testLogging {

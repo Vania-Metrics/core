@@ -146,6 +146,9 @@ public abstract class CollectorSmokeTest {
 						: ServerContainer.game(v, gameImage(config), jars, gameEnv(env, config), network, "lobby",
 								cell)) {
 			started[0] = server;
+			if (config.startupTimeout() != null) {
+				server.withStartupTimeout(config.startupTimeout());
+			}
 			if (backend != null) {
 				// A proxy without a backend runs, but a collector reading its players or servers
 				// would then only ever see empty lists.

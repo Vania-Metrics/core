@@ -52,13 +52,21 @@ public final class ServerContainer implements AutoCloseable {
 	};
 
 	private final GenericContainer<?> container;
+	private final String ready;
 	private final Path logFile;
 	private String finalLog;
 	private Long exitCode;
 
-	private ServerContainer(GenericContainer<?> container, Path logFile) {
+	private ServerContainer(GenericContainer<?> container, String ready, Path logFile) {
 		this.container = container;
+		this.ready = ready;
 		this.logFile = logFile;
+	}
+
+	/** Longer than the default eight minutes, for a server that downloads a lot on start. */
+	public ServerContainer withStartupTimeout(Duration timeout) {
+		container.waitingFor(Wait.forLogMessage(ready, 1).withStartupTimeout(timeout));
+		return this;
 	}
 
 	/**
@@ -134,7 +142,7 @@ public final class ServerContainer implements AutoCloseable {
 			c.withCopyFileToContainer(MountableFile.forHostPath(variant.serverJar().source().get(), 0644),
 					"/server-jars/" + variant.serverJar().fileName());
 		}
-		return new ServerContainer(c, logFile(cell));
+		return new ServerContainer(c, variant.ready(), logFile(cell));
 	}
 
 	/**

@@ -2,6 +2,7 @@ package fr.samflix.vaniametrics.testkit;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.regex.Pattern;
  * collectors: [pregen]     # names in mc_exporter_collector_info, not the repository name
  * runtime: java21          # java21 | java25: the game server's Java
  * memory: 3G               # the game server's heap, when 1G is not enough (Nova)
+ * startup-timeout: 20m     # how long the server may take to start, when 8 minutes is not enough
  * jvm-args: []             # extra JVM flags for the game server
  * env: {}                  # extra environment, e.g. VANIA_METRICS_COLLECTOR_PLACEHOLDER_LIST
  * plugins:                 # per family: bukkit | velocity | bungee; the first is the target
@@ -33,6 +35,7 @@ public record CollectorTestConfig(
 		List<String> collectors,
 		String runtime,
 		String memory,
+		Duration startupTimeout,
 		List<String> jvmArgs,
 		Map<String, String> env,
 		Map<String, List<Download>> plugins,
@@ -44,7 +47,8 @@ public record CollectorTestConfig(
 	}
 
 	private static final Set<String> KEYS =
-			Set.of("collectors", "runtime", "memory", "jvm-args", "env", "plugins", "per-platform", "allow-logs");
+			Set.of("collectors", "runtime", "memory", "startup-timeout", "jvm-args", "env", "plugins", "per-platform",
+					"allow-logs");
 
 	public static CollectorTestConfig load(Path file) throws IOException {
 		Map<String, Object> root = Yamls.load(file);
@@ -65,6 +69,14 @@ public record CollectorTestConfig(
 		if (!memory.isEmpty() && !memory.matches("\\d+[MG]")) {
 			throw new IllegalArgumentException(file + ": memory must look like 1536M or 3G, not " + memory);
 		}
+		Duration startupTimeout = null;
+		String timeout = root.getOrDefault("startup-timeout", "").toString();
+		if (!timeout.isEmpty()) {
+			if (!timeout.matches("\\d+m")) {
+				throw new IllegalArgumentException(file + ": startup-timeout is in minutes, like 20m, not " + timeout);
+			}
+			startupTimeout = Duration.ofMinutes(Long.parseLong(timeout.substring(0, timeout.length() - 1)));
+		}
 		Map<String, String> env = new LinkedHashMap<>();
 		if (root.get("env") instanceof Map<?, ?> m) {
 			m.forEach((k, v) -> env.put(String.valueOf(k), String.valueOf(v)));
@@ -83,8 +95,8 @@ public record CollectorTestConfig(
 			});
 		}
 		List<Pattern> allow = strings(root.get("allow-logs")).stream().map(Pattern::compile).toList();
-		return new CollectorTestConfig(collectors, runtime, memory, strings(root.get("jvm-args")), env, plugins,
-				perPlatform, allow);
+		return new CollectorTestConfig(collectors, runtime, memory, startupTimeout, strings(root.get("jvm-args")),
+				env, plugins, perPlatform, allow);
 	}
 
 	private static List<String> strings(Object o) {
