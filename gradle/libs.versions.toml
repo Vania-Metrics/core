@@ -20,10 +20,17 @@
 paper-api = "1.21.11-R0.1-20260511.115010-91"
 velocity-api = "3.5.1"
 sponge-api = "17.0.0"
+bungeecord-api = "1.21-R0.3"
 adventure = "4.26.1"
 
 [libraries]
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+geyser-api = { module = "org.geysermc.geyser:api", version = "2.11.2-20260910.131131-9" }
+# The Geyser API jar is read without its metadata (see settings.gradle.kts): its dependencies are listed here.
+geyser-base-api = { module = "org.geysermc.api:base-api", version = "1.0.3" }
+# base-api pulls this as a floating 1.1-SNAPSHOT; pinned here, and excluded from base-api.
+geyser-events = { module = "org.geysermc.event:events", version = "1.1-20230815.153219-4" }
+bungeecord-api = { module = "net.md-5:bungeecord-api", version.ref = "bungeecord-api" }
 sponge-api = { module = "org.spongepowered:spongeapi", version.ref = "sponge-api" }
 velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity-api" }
 adventure-api = { module = "net.kyori:adventure-api", version.ref = "adventure" }

@@ -76,6 +76,8 @@ public final class MetricRegistry {
 	private static final Set<String> DOMAINS = Set.of(
 			// Exposed by the server and the machine themselves.
 			"server", "world", "proxy", "jvm", "host",
+			// Bedrock players, as seen by Geyser.
+			"bedrock",
 			// Backed by a plugin.
 			"economy", "quest", "permission", "network", "multiverse", "spark",
 			"anticheat", "mob", "region", "pregen", "inventory", "portal", "nova",

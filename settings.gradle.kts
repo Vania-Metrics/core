@@ -26,6 +26,40 @@ dependencyResolutionManagement {
         }
         mavenCentral()
         maven("https://repo.papermc.io/repository/maven-public/")
+        // The Geyser API is only published as snapshots; one is pinned by timestamp and read as a
+        // fixed version, for the same reason as paper-api above.
+        exclusiveContent {
+            forRepository {
+                ivy("https://repo.opencollab.dev/main/") {
+                    name = "geyserPinnedSnapshots"
+                    patternLayout {
+                        setM2compatible(true)
+                        artifact("[organisation]/[module]/2.11.2-SNAPSHOT/[module]-[revision].[ext]")
+                    }
+                    metadataSources { artifact() }
+                }
+            }
+            filter { includeModule("org.geysermc.geyser", "api") }
+        }
+        exclusiveContent {
+            forRepository {
+                ivy("https://repo.opencollab.dev/main/") {
+                    name = "geyserEventsPinnedSnapshot"
+                    patternLayout {
+                        setM2compatible(true)
+                        artifact("[organisation]/[module]/1.1-SNAPSHOT/[module]-[revision].[ext]")
+                    }
+                    metadataSources { artifact() }
+                }
+            }
+            filter { includeModule("org.geysermc.event", "events") }
+        }
+        maven("https://repo.opencollab.dev/main/") {
+            content {
+                includeGroupByRegex("org\\.geysermc.*")
+                includeGroupByRegex("org\\.cloudburstmc.*")
+            }
+        }
         maven("https://repo.spongepowered.org/repository/maven-public/") {
             content { includeGroup("org.spongepowered") }
         }
@@ -35,9 +69,11 @@ dependencyResolutionManagement {
 // The project name is the Maven coordinate. A collector that includes this build (includeBuild)
 // depends on "fr.samflix:vania-metrics-api", and Gradle substitutes this project by name, not by
 // jar name. Hence the long project names and short directories.
-include("vania-metrics-api", "vania-metrics-common", "vania-metrics-bukkit", "vania-metrics-velocity", "vania-metrics-sponge")
+include("vania-metrics-api", "vania-metrics-common", "vania-metrics-bukkit", "vania-metrics-velocity", "vania-metrics-sponge", "vania-metrics-bungee", "vania-metrics-geyser")
 project(":vania-metrics-api").projectDir = file("api")
 project(":vania-metrics-common").projectDir = file("common")
 project(":vania-metrics-bukkit").projectDir = file("bukkit")
 project(":vania-metrics-velocity").projectDir = file("velocity")
 project(":vania-metrics-sponge").projectDir = file("sponge")
+project(":vania-metrics-bungee").projectDir = file("bungee")
+project(":vania-metrics-geyser").projectDir = file("geyser")

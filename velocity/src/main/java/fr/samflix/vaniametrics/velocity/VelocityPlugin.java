@@ -16,10 +16,12 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import fr.samflix.vaniametrics.api.Config;
 import fr.samflix.vaniametrics.api.Version;
 import fr.samflix.vaniametrics.core.Exporter;
+import fr.samflix.vaniametrics.core.proxy.ProxyCollector;
+import fr.samflix.vaniametrics.core.proxy.ProxyEvents;
 
 /**
- * Velocity entry point. The counterpart of {@code PaperPlugin}: builds the platform and starts
- * the exporter; registry, format, HTTP server and collector plugins share the same code.
+ * Velocity entry point. Builds the platform and starts the exporter; the proxy collector, the
+ * event counters, the registry and the HTTP server are shared with every other proxy loader.
  */
 @Plugin(
 		id = "vaniametrics",
@@ -49,11 +51,11 @@ public final class VelocityPlugin {
 		exporter = new Exporter(platform, config);
 
 		if (config.isCollectorEnabled("events", true)) {
-			proxy.getEventManager().register(this, new ProxyEventListener(exporter.registry()));
+			proxy.getEventManager().register(this, new ProxyEventListener(new ProxyEvents(exporter.registry())));
 		}
 
 		try {
-			exporter.start(List.of(new ProxyCollector(proxy, config)));
+			exporter.start(List.of(new ProxyCollector(new VelocityProxyServer(proxy), config)));
 		} catch (Exception error) {
 			logger.error("failed to start", error);
 		}

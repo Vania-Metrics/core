@@ -7,7 +7,9 @@ Gradle build, Java 21.
 |---|---|---|
 | CraftBukkit, Spigot, Paper, Purpur, Folia | `vania-metrics-bukkit` | Spigot, Paper, Purpur, Folia 1.21.11 |
 | Sponge (API 17) | `vania-metrics-sponge` | SpongeVanilla 1.21.10 |
-| Velocity | `vania-metrics-velocity` | Velocity 3.5 |
+| Velocity | `vania-metrics-velocity` | Velocity 3.5 / 4.2 |
+| BungeeCord, Waterfall | `vania-metrics-bungee` | BungeeCord, Waterfall build 615 |
+| Geyser (extension) | `vania-metrics-geyser` | Geyser Standalone 2.11.3 |
 
 One Bukkit jar covers the whole family: optional APIs (Paper's tick buffer and world counters,
 client brand) are probed at startup, and Folia gets region schedulers instead of the main thread.
@@ -27,7 +29,9 @@ A metric a loader cannot provide is left out, never faked.
 | `common/`   | `vania-metrics-common`   | exporter, HTTP server, JVM/disk/cgroup collectors, and the game collectors (tick, worlds, players, events) behind a neutral `GameServer` interface |
 | `bukkit/`   | `vania-metrics-bukkit`   | the core, as a Bukkit/Spigot/Paper/Purpur/Folia plugin |
 | `sponge/`   | `vania-metrics-sponge`   | the core, as a Sponge plugin                           |
-| `velocity/` | `vania-metrics-velocity` | the core, as a Velocity plugin                         |
+| `velocity/` | `vania-metrics-velocity` | the proxy core, as a Velocity plugin                   |
+| `bungee/`   | `vania-metrics-bungee`   | the proxy core, as a BungeeCord/Waterfall plugin       |
+| `geyser/`   | `vania-metrics-geyser`   | the proxy core, as a Geyser extension, plus Bedrock device/input metrics |
 
 ## Outputs
 

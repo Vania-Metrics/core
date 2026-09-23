@@ -1,0 +1,7 @@
+# bungee.yml rather than plugin.yml: BungeeCord reads it first, and it cannot be mistaken for a
+# Bukkit descriptor.
+name: VaniaMetrics
+version: ${version}
+main: fr.samflix.vaniametrics.bungee.BungeePlugin
+author: Vania-Metrics
+description: Exposes network metrics in the Prometheus format.

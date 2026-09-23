@@ -1,13 +1,8 @@
-package fr.samflix.vaniametrics.velocity;
+package fr.samflix.vaniametrics.core.proxy;
 
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
-import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 
 import fr.samflix.vaniametrics.api.Collector;
 import fr.samflix.vaniametrics.api.Config;
@@ -22,11 +17,11 @@ import fr.samflix.vaniametrics.api.MetricRegistry;
  * before a player complains, and it is the only view from outside: a server that is down publishes
  * nothing, so its own exporter cannot report it.
  *
- * <p>Runs in the background because of the ping. {@code RegisteredServer.ping()} opens a connection
- * and waits for an answer; doing that on scrape would make scrape duration depend on backend
- * health, the very thing being measured.
+ * <p>Runs in the background because of the ping, which opens a connection and waits for an
+ * answer; doing that on scrape would make scrape duration depend on backend health, the very
+ * thing being measured.
  */
-final class ProxyCollector implements Collector {
+public final class ProxyCollector implements Collector {
 
 	private final ProxyServer proxy;
 	private final long pingTimeout;
@@ -39,7 +34,7 @@ final class ProxyCollector implements Collector {
 	private Histogram ping;
 	private Gauge byBrand;
 
-	ProxyCollector(ProxyServer proxy, Config config) {
+	public ProxyCollector(ProxyServer proxy, Config config) {
 		this.proxy = proxy;
 		this.pingTimeout = config.getSeconds("collector.proxy.ping_timeout", 5);
 	}
@@ -79,28 +74,35 @@ final class ProxyCollector implements Collector {
 
 	@Override
 	public void collect(MetricRegistry r) {
-		online.set(proxy.getPlayerCount());
+		online.set(proxy.playerCount());
 
 		byBrand.clear();
 		Map<String, Integer> brands = new HashMap<>();
-		for (Player p : proxy.getAllPlayers()) {
-			ping.observe(p.getPing() / 1000.0);
-			String b = p.getClientBrand();
+		for (ProxyServer.ProxyPlayer p : proxy.players()) {
+			ping.observe(p.pingMillis() / 1000.0);
+			String b = p.brand();
 			brands.merge(b == null || b.isBlank() ? "unknown" : b.toLowerCase(Locale.ROOT), 1,
 					Integer::sum);
 		}
 		brands.forEach((b, n) -> byBrand.set(n, b));
 
-		for (RegisteredServer server : proxy.getAllServers()) {
-			String name = server.getServerInfo().getName();
-			perBackend.set(server.getPlayersConnected().size(), name);
+		// Backends can be removed at runtime; clear so a removed one does not stay "up" forever.
+		perBackend.clear();
+		backendUp.clear();
+		pingDuration.clear();
+		advertisedMax.clear();
+		for (ProxyServer.Backend backend : proxy.backends()) {
+			String name = backend.name();
+			perBackend.set(backend.players(), name);
 
 			long start = System.nanoTime();
 			try {
-				var response = server.ping().get(pingTimeout, TimeUnit.SECONDS);
+				int max = proxy.ping(name, pingTimeout);
 				backendUp.set(1, name);
 				pingDuration.set((System.nanoTime() - start) / 1e9, name);
-				response.getPlayers().ifPresent(p -> advertisedMax.set(p.getMax(), name));
+				if (max >= 0) {
+					advertisedMax.set(max, name);
+				}
 			} catch (Exception e) {
 				// Any exception means "not answering": timeout, connection refused, unreadable
 				// response. Telling them apart would add a label for information the logs already

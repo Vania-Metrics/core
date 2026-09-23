@@ -1,0 +1,6 @@
+id: vaniametrics
+name: VaniaMetrics
+main: fr.samflix.vaniametrics.geyser.GeyserMetricsExtension
+api: 2.11.0
+version: ${version}
+authors: [Vania-Metrics]
