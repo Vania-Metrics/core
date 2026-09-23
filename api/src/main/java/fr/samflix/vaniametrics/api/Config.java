@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -25,8 +26,11 @@ public final class Config {
 	private static final String ENV_PREFIX = "VANIA_METRICS_";
 
 	private final Properties props = new Properties();
+	private final Map<String, String> env;
 
-	private Config() {}
+	private Config(Map<String, String> env) {
+		this.env = env;
+	}
 
 	/**
 	 * Loads the configuration, writing the default file first if it is missing.
@@ -35,7 +39,12 @@ public final class Config {
 	 * reading the code.
 	 */
 	public static Config load(Platform platform) {
-		Config c = new Config();
+		return load(platform, System.getenv());
+	}
+
+	/** {@link #load(Platform)} with a given environment instead of the process's. For tests. */
+	public static Config load(Platform platform, Map<String, String> env) {
+		Config c = new Config(env);
 		Path file = platform.dataDirectory().resolve("metrics.properties");
 		try {
 			if (!Files.exists(file)) {
@@ -62,12 +71,22 @@ public final class Config {
 
 	/** For tests, and for a platform without a data directory. */
 	public static Config empty() {
-		return new Config();
+		return new Config(System.getenv());
+	}
+
+	/**
+	 * A configuration from given properties and environment, without touching the disk or the
+	 * process environment. For tests.
+	 */
+	public static Config of(Properties properties, Map<String, String> env) {
+		Config c = new Config(Map.copyOf(env));
+		c.props.putAll(properties);
+		return c;
 	}
 
 	private String raw(String key) {
-		String env = System.getenv(ENV_PREFIX + key.replace('.', '_').toUpperCase(Locale.ROOT));
-		return env != null && !env.isEmpty() ? env : props.getProperty(key);
+		String value = env.get(ENV_PREFIX + key.replace('.', '_').toUpperCase(Locale.ROOT));
+		return value != null && !value.isEmpty() ? value : props.getProperty(key);
 	}
 
 	public String getString(String key, String defaultValue) {

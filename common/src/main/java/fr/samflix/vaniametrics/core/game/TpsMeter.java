@@ -1,5 +1,7 @@
 package fr.samflix.vaniametrics.core.game;
 
+import java.util.function.LongSupplier;
+
 /**
  * TPS over 1, 5 and 15 minutes, for loaders that do not compute it (CraftBukkit, Spigot, Folia's
  * global region, Sponge): the loader runs it every tick, and TPS over a window is the number of
@@ -17,14 +19,24 @@ public final class TpsMeter implements Runnable {
 	private static final int[] WINDOWS_SECONDS = {60, 300, 900};
 	private static final int CAPACITY = WINDOWS_SECONDS[WINDOWS_SECONDS.length - 1] * TICKS_PER_SECOND + 1;
 
+	private final LongSupplier clock;
 	private final long[] stamps = new long[CAPACITY];
 	private int count;
 	private int next;
 	private int ticks;
 
+	public TpsMeter() {
+		this(System::nanoTime);
+	}
+
+	/** @param clock nanoseconds, like {@link System#nanoTime()}; replaceable for tests */
+	TpsMeter(LongSupplier clock) {
+		this.clock = clock;
+	}
+
 	@Override
 	public synchronized void run() {
-		stamps[next] = System.nanoTime();
+		stamps[next] = clock.getAsLong();
 		next = (next + 1) % CAPACITY;
 		if (count < CAPACITY) {
 			count++;

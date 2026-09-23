@@ -1,0 +1,46 @@
+# Metric contract, profile game-folia: family, type, label names.
+# Rewritten by: ./gradlew :vania-metrics-common:test -Pvania.contract.update
+# A line that disappears or changes breaks dashboards and alerts.
+mc_build_info gauge version,platform,server_version,server
+mc_exporter_background_task_age_seconds gauge collector
+mc_exporter_collector_duration_seconds histogram collector
+mc_exporter_collector_info gauge collector,source,mode
+mc_exporter_player_series_dropped gauge
+mc_exporter_scrape_duration_seconds histogram
+mc_exporter_scrape_errors_total counter collector
+mc_exporter_up gauge
+mc_jvm_buffer_pool_bytes gauge pool,state
+mc_jvm_classes_loaded gauge
+mc_jvm_gc_collections_total counter gc
+mc_jvm_gc_seconds_total counter gc
+mc_jvm_memory_bytes gauge area,state
+mc_jvm_memory_pool_bytes gauge pool,state
+mc_jvm_threads gauge state
+mc_jvm_threads_deadlocked gauge
+mc_jvm_uptime_seconds gauge
+mc_server_blocks_total counter action
+mc_server_chat_messages_total counter
+mc_server_commands_total counter command
+mc_server_connections_total counter result
+mc_server_deaths_total counter cause
+mc_server_items_crafted_total counter
+mc_server_mob_deaths_total counter entity_type
+mc_server_player_ping_seconds gauge player,uuid
+mc_server_player_playtime_seconds gauge player,uuid
+mc_server_player_statistic gauge player,uuid,statistic
+mc_server_player_statistics gauge statistic
+mc_server_players_by_brand gauge brand
+mc_server_players_by_locale gauge locale
+mc_server_players_max gauge
+mc_server_players_online gauge
+mc_server_players_ping_seconds histogram
+mc_server_playtime_seconds_total counter
+mc_server_session_seconds histogram
+mc_server_ticks_total counter
+mc_server_tps gauge window
+mc_world_chunks_loaded gauge world
+mc_world_entities gauge world
+mc_world_players gauge world
+mc_world_tile_entities gauge world
+mc_world_time_ticks gauge world
+mc_world_weather gauge world

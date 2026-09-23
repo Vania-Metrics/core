@@ -1,0 +1,30 @@
+# Metric contract, profile proxy: family, type, label names.
+# Rewritten by: ./gradlew :vania-metrics-common:test -Pvania.contract.update
+# A line that disappears or changes breaks dashboards and alerts.
+mc_build_info gauge version,platform,server_version,server
+mc_exporter_background_task_age_seconds gauge collector
+mc_exporter_collector_duration_seconds histogram collector
+mc_exporter_collector_info gauge collector,source,mode
+mc_exporter_scrape_duration_seconds histogram
+mc_exporter_scrape_errors_total counter collector
+mc_exporter_up gauge
+mc_jvm_buffer_pool_bytes gauge pool,state
+mc_jvm_classes_loaded gauge
+mc_jvm_gc_collections_total counter gc
+mc_jvm_gc_seconds_total counter gc
+mc_jvm_memory_bytes gauge area,state
+mc_jvm_memory_pool_bytes gauge pool,state
+mc_jvm_threads gauge state
+mc_jvm_threads_deadlocked gauge
+mc_jvm_uptime_seconds gauge
+mc_proxy_backend_max_players gauge server
+mc_proxy_backend_ping_seconds gauge server
+mc_proxy_backend_players gauge server
+mc_proxy_backend_up gauge server
+mc_proxy_connections_total counter result
+mc_proxy_kicks_from_server_total counter server
+mc_proxy_pings_total counter
+mc_proxy_player_ping_seconds histogram
+mc_proxy_players_by_brand gauge brand
+mc_proxy_players_online gauge
+mc_proxy_server_switches_total counter from,to

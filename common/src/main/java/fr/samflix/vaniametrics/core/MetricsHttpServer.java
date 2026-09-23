@@ -56,8 +56,13 @@ final class MetricsHttpServer {
 			return t;
 		}));
 		server.start();
-		platform.info("serving metrics on http://" + bind + ":" + port + path
+		platform.info("serving metrics on http://" + bind + ":" + port() + path
 				+ (token.isEmpty() ? "" : " (token required)"));
+	}
+
+	/** The port actually bound: differs from the configured one when that is 0 (tests). */
+	int port() {
+		return server.getAddress().getPort();
 	}
 
 	void stop() {

@@ -216,8 +216,13 @@ public final class Exporter implements VaniaMetrics {
 		}
 	}
 
+	/** The port the HTTP server is bound to. For tests, which start it on port 0. */
+	int httpPort() {
+		return http.port();
+	}
+
 	/** Called by the HTTP thread. Must return quickly: see {@link Collector}. */
-	private String scrape() {
+	String scrape() {
 		long start = System.nanoTime();
 		for (Collector c : onScrape) {
 			collect(c);
