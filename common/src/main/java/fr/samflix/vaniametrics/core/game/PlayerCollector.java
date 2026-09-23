@@ -1,13 +1,10 @@
-package fr.samflix.vaniametrics.paper;
+package fr.samflix.vaniametrics.core.game;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
-
-import org.bukkit.Bukkit;
-import org.bukkit.Statistic;
-import org.bukkit.entity.Player;
 
 import fr.samflix.vaniametrics.api.Collector;
 import fr.samflix.vaniametrics.api.Config;
@@ -17,6 +14,7 @@ import fr.samflix.vaniametrics.api.Histogram;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 import fr.samflix.vaniametrics.api.PlayerRef;
 import fr.samflix.vaniametrics.api.PlayerSeries;
+import fr.samflix.vaniametrics.core.game.PlayerSnapshot.Stat;
 
 /**
  * Online players, at two levels.
@@ -24,16 +22,15 @@ import fr.samflix.vaniametrics.api.PlayerSeries;
  * <p><b>Aggregates</b>: sums, histograms, breakdowns over bounded sets such as client brand or
  * locale. No player label; they answer "how many, when".
  *
- * <p><b>Per-player detail</b>, only for online players and under a cap; see {@link PlayerSeries}
- * for the reasoning. It answers "who", which no aggregate can, without a database or a log
- * pipeline.
+ * <p><b>Per-player detail</b>, only for online players and under a cap; see {@link PlayerSeries}.
+ * It answers "who", which no aggregate can, without a database or a log pipeline.
  *
  * <p>Vanilla statistics are per player and cumulative forever; they are summed over online
- * players. That total drops when a player leaves, so it is a gauge, not a counter. Event counters
- * live in {@link GameEventListener}.
+ * players. That total drops when a player leaves, so it is a gauge, not a counter.
  */
-final class PlayerCollector implements Collector {
+public final class PlayerCollector implements Collector {
 
+	private final GameServer server;
 	private final Config config;
 
 	private Gauge online;
@@ -43,14 +40,14 @@ final class PlayerCollector implements Collector {
 	private Gauge statistics;
 	private Counter playtime;
 
-	// Per-player detail. These instruments are handed to PlayerSeries, which clears them when the
-	// set of online players changes.
+	// Handed to PlayerSeries, which clears them when the set of online players changes.
 	private Gauge playerPing;
 	private Gauge playerPlaytime;
 	private Gauge playerStatistic;
 	private PlayerSeries series;
 
-	PlayerCollector(Config config) {
+	public PlayerCollector(GameServer server, Config config) {
+		this.server = server;
 		this.config = config;
 	}
 
@@ -69,8 +66,8 @@ final class PlayerCollector implements Collector {
 		online = r.gauge("server_players_online", "Online players.");
 		ping = r.histogram("server_players_ping_seconds",
 				"Ping distribution of online players.", Histogram.PING_SECONDS);
-		// No client version here: org.bukkit.entity.Player has no method for it. It comes from
-		// ViaVersion, so from a collector plugin. The core only reports what the platform exposes.
+		// No client version here: loaders do not expose it. It comes from ViaVersion or
+		// PacketEvents, so from a collector plugin.
 		byBrand = r.gauge("server_players_by_brand",
 				"Players by advertised client brand. A mod can fake it: it describes honest "
 						+ "players, not cheaters.",
@@ -96,7 +93,7 @@ final class PlayerCollector implements Collector {
 
 	@Override
 	public void collect(MetricRegistry r) {
-		var players = Bukkit.getOnlinePlayers();
+		List<PlayerSnapshot> players = server.players();
 		online.set(players.size());
 
 		var refs = players.stream().map(PlayerCollector::ref).toList();
@@ -110,79 +107,50 @@ final class PlayerCollector implements Collector {
 
 		Map<String, Integer> brands = new HashMap<>();
 		Map<String, Integer> locales = new HashMap<>();
-		long playerKills = 0;
-		long mobKills = 0;
-		long deaths = 0;
-		long damageDealt = 0;
-		long damageTaken = 0;
-		long jumps = 0;
-		long playTicks = 0;
+		Map<Stat, Long> totals = new HashMap<>();
 
-		for (Player p : players) {
-			ping.observe(p.getPing() / 1000.0);
-			if (published.contains(p.getUniqueId().toString())) {
+		for (PlayerSnapshot p : players) {
+			ping.observe(p.pingMillis() / 1000.0);
+			if (published.contains(p.uuid().toString())) {
 				publishDetail(p);
 			}
-			brands.merge(brand(p), 1, Integer::sum);
-			locales.merge(locale(p), 1, Integer::sum);
-
-			playerKills += stat(p, Statistic.PLAYER_KILLS);
-			mobKills += stat(p, Statistic.MOB_KILLS);
-			deaths += stat(p, Statistic.DEATHS);
-			damageDealt += stat(p, Statistic.DAMAGE_DEALT);
-			damageTaken += stat(p, Statistic.DAMAGE_TAKEN);
-			jumps += stat(p, Statistic.JUMP);
-			playTicks += stat(p, Statistic.PLAY_ONE_MINUTE);
+			brands.merge(normalize(p.brand()), 1, Integer::sum);
+			locales.merge(normalize(p.locale()), 1, Integer::sum);
+			for (Stat s : Stat.values()) {
+				totals.merge(s, p.stat(s), Long::sum);
+			}
 		}
 
 		brands.forEach((b, n) -> byBrand.set(n, b));
 		locales.forEach((l, n) -> byLocale.set(n, l));
 
-		statistics.set(playerKills, "player_kills");
-		statistics.set(mobKills, "mob_kills");
-		statistics.set(deaths, "deaths");
+		statistics.set(totals.getOrDefault(Stat.PLAYER_KILLS, 0L), "player_kills");
+		statistics.set(totals.getOrDefault(Stat.MOB_KILLS, 0L), "mob_kills");
+		statistics.set(totals.getOrDefault(Stat.DEATHS, 0L), "deaths");
 		// Vanilla damage statistics are in tenths of a health point; publish health points.
-		statistics.set(damageDealt / 10.0, "damage_dealt");
-		statistics.set(damageTaken / 10.0, "damage_taken");
-		statistics.set(jumps, "jumps");
-		// PLAY_ONE_MINUTE counts ticks despite its name, a classic API trap.
-		playtime.mirror(playTicks / 20.0);
+		statistics.set(totals.getOrDefault(Stat.DAMAGE_DEALT, 0L) / 10.0, "damage_dealt");
+		statistics.set(totals.getOrDefault(Stat.DAMAGE_TAKEN, 0L) / 10.0, "damage_taken");
+		statistics.set(totals.getOrDefault(Stat.JUMPS, 0L), "jumps");
+		playtime.mirror(totals.getOrDefault(Stat.PLAY_TICKS, 0L) / 20.0);
 	}
 
 	/** Only called for players the cap lets through. */
-	private void publishDetail(Player p) {
+	private void publishDetail(PlayerSnapshot p) {
 		PlayerRef ref = ref(p);
-		playerPing.set(p.getPing() / 1000.0, ref.labels());
-		playerPlaytime.set(stat(p, Statistic.PLAY_ONE_MINUTE) / 20.0, ref.labels());
-		playerStatistic.set(stat(p, Statistic.PLAYER_KILLS), ref.labels("player_kills"));
-		playerStatistic.set(stat(p, Statistic.MOB_KILLS), ref.labels("mob_kills"));
-		playerStatistic.set(stat(p, Statistic.DEATHS), ref.labels("deaths"));
-		playerStatistic.set(stat(p, Statistic.DAMAGE_DEALT) / 10.0, ref.labels("damage_dealt"));
-		playerStatistic.set(stat(p, Statistic.DAMAGE_TAKEN) / 10.0, ref.labels("damage_taken"));
+		playerPing.set(p.pingMillis() / 1000.0, ref.labels());
+		playerPlaytime.set(p.stat(Stat.PLAY_TICKS) / 20.0, ref.labels());
+		playerStatistic.set(p.stat(Stat.PLAYER_KILLS), ref.labels("player_kills"));
+		playerStatistic.set(p.stat(Stat.MOB_KILLS), ref.labels("mob_kills"));
+		playerStatistic.set(p.stat(Stat.DEATHS), ref.labels("deaths"));
+		playerStatistic.set(p.stat(Stat.DAMAGE_DEALT) / 10.0, ref.labels("damage_dealt"));
+		playerStatistic.set(p.stat(Stat.DAMAGE_TAKEN) / 10.0, ref.labels("damage_taken"));
 	}
 
-	private static PlayerRef ref(Player p) {
-		return PlayerRef.of(p.getUniqueId(), p.getName());
+	private static PlayerRef ref(PlayerSnapshot p) {
+		return PlayerRef.of(p.uuid(), p.name());
 	}
 
-	private int stat(Player p, Statistic s) {
-		try {
-			return p.getStatistic(s);
-		} catch (IllegalArgumentException e) {
-			// A statistic removed by a Minecraft version. Zero rather than a failure.
-			return 0;
-		}
-	}
-
-	private String brand(Player p) {
-		String b = p.getClientBrandName();
-		return b == null || b.isBlank() ? "unknown" : b.toLowerCase(Locale.ROOT);
-	}
-
-	private String locale(Player p) {
-		// locale() rather than the deprecated getLocale(): it returns an already normalised
-		// java.util.Locale instead of the client's raw string.
-		Locale l = p.locale();
-		return l == null ? "unknown" : l.toLanguageTag().toLowerCase(Locale.ROOT);
+	private static String normalize(String value) {
+		return value == null || value.isBlank() ? "unknown" : value.toLowerCase(Locale.ROOT);
 	}
 }

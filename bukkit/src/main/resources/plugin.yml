@@ -3,7 +3,7 @@
 # Bukkit loads the core first. No softdepend is needed here.
 name: VaniaMetrics
 version: ${version}
-main: fr.samflix.vaniametrics.paper.PaperPlugin
+main: fr.samflix.vaniametrics.bukkit.BukkitPlugin
 api-version: '1.21'
 authors: [mc-vania]
 description: Exposes server metrics in the Prometheus format.

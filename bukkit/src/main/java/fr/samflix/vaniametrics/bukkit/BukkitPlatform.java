@@ -1,4 +1,4 @@
-package fr.samflix.vaniametrics.paper;
+package fr.samflix.vaniametrics.bukkit;
 
 import java.nio.file.Path;
 import java.util.Optional;
@@ -11,17 +11,19 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import fr.samflix.vaniametrics.api.Platform;
 
-final class PaperPlatform implements Platform {
+final class BukkitPlatform implements Platform {
 
 	private final JavaPlugin plugin;
+	private final ServerFlavor flavor;
 
-	PaperPlatform(JavaPlugin plugin) {
+	BukkitPlatform(JavaPlugin plugin, ServerFlavor flavor) {
 		this.plugin = plugin;
+		this.flavor = flavor;
 	}
 
 	@Override
 	public String type() {
-		return "paper";
+		return flavor.name();
 	}
 
 	@Override
@@ -29,7 +31,7 @@ final class PaperPlatform implements Platform {
 		// From the environment rather than server.properties: the deployment knows what this
 		// instance is called on the network, and it is the same name its other labels carry.
 		String env = System.getenv("VANIA_SERVER_NAME");
-		return env != null && !env.isEmpty() ? env : "paper";
+		return env != null && !env.isEmpty() ? env : flavor.name();
 	}
 
 	@Override
