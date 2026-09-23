@@ -14,7 +14,7 @@ package fr.samflix.vaniametrics.api;
  */
 public final class Version {
 
-	public static final String VALEUR = "0.2.0";
+	public static final String VALEUR = "0.2.1";
 
 	private Version() {}
 }

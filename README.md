@@ -1,27 +1,44 @@
 # vania-metrics — core
 
-L'API publique et le noyau (Paper + Velocity) de VaniaMetrics.
+L'API publique et le noyau (Paper + Velocity) de VaniaMetrics. Build Gradle, Java 21.
 
 ```sh
-./build.sh              # tout, dans dist/
-./build.sh --verifier   # compile seulement
+./gradlew build                  # tout
+./gradlew compileJava            # compile seulement
+./gradlew publishToMavenLocal    # publie l'API dans ~/.m2 (avec son .pom)
 ```
+
+## Organisation
+
+| Dossier     | Projet Gradle              | Rôle                                                      |
+|-------------|----------------------------|-----------------------------------------------------------|
+| `api/`      | `vania-metrics-api`        | l'interface publique, sur le JDK seul — aucune dépendance |
+| `common/`   | `vania-metrics-common`     | exportateur, serveur HTTP, collecteurs JVM/disque/cgroup  |
+| `paper/`    | `vania-metrics-paper`      | le noyau, plugin Bukkit                                   |
+| `velocity/` | `vania-metrics-velocity`   | le noyau, plugin Velocity                                 |
 
 ## Ce qui sort
 
 ```
-dist/
-  vania-metrics-api-<v>.jar        l'interface publique
-  vania-metrics-api-<v>.pom        pour dépendre en Maven/Gradle (mvn install:install-file)
-  VaniaMetrics-<v>-paper.jar       le noyau, plugin Bukkit
-  VaniaMetrics-<v>-velocity.jar    le noyau, plugin Velocity
+api/build/libs/vania-metrics-api-<v>.jar
+paper/build/libs/VaniaMetrics-<v>-paper.jar         API + common embarqués
+velocity/build/libs/VaniaMetrics-<v>-velocity.jar   API + common embarqués
+```
+
+La version est lue dans `api/…/Version.java`, jamais recopiée. Une version publiée
+se tague `vX.Y.Z` : c'est la ref que les collecteurs épinglent.
+
+## Dépendances
+
+Versions dans `gradle/libs.versions.toml`. Toutes les empreintes SHA-256 sont
+vérifiées par Gradle (`gradle/verification-metadata.xml`). Après une montée de version :
+
+```sh
+./gradlew --write-verification-metadata sha256 build
 ```
 
 ## Les collecteurs
 
-Chaque collecteur vit dans son propre dépôt (`../colecteur-<nom>/`), et
-compile contre `dist/vania-metrics-api-<v>.jar` — construit ici d'abord.
-
-Voir le [README d'origine](../README.md) pour la conception d'ensemble :
-convention de nommage `mc_<domaine>_<sujet>`, l'écriture d'un module,
-et les règles qui ne se discutent pas.
+Chaque collecteur vit dans son propre dépôt (`Vania-Metrics/colecteur-<nom>`) et
+inclut ce dépôt-ci comme build composite, cloné à un tag : il dépend de
+`fr.samflix:vania-metrics-api`, que Gradle relie au projet `api/`.

@@ -1,0 +1,21 @@
+# Dépendances de COMPILATION seulement — aucune ne part dans les jars produits,
+# à part l'API et le noyau commun, qui sont les nôtres.
+#
+# Les empreintes SHA-256 de tout ce qui est résolu sont épinglées dans
+# gradle/verification-metadata.xml. Après une montée de version :
+#   ./gradlew --write-verification-metadata sha256 build
+#
+# paper-api EST UN INSTANTANÉ DATÉ. Paper ne publie pas de version figée de son
+# API : l'horodatage est la version. Pour le relever à nouveau, lire
+# maven-metadata.xml du répertoire 1.21.11-R0.1-SNAPSHOT. L'empreinte a été
+# vérifiée identique à celle du jar que le serveur charge réellement.
+#
+# velocity-api EST AUSSI UN PROCESSEUR D'ANNOTATIONS : c'est lui qui écrit
+# velocity-plugin.json à partir de @Plugin. Une deuxième source de vérité en moins.
+[versions]
+paper-api = "1.21.11-R0.1-20260511.115010-91"
+velocity-api = "3.5.1"
+
+[libraries]
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "velocity-api" }
