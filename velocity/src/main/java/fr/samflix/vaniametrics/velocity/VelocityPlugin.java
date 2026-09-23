@@ -1,6 +1,7 @@
 package fr.samflix.vaniametrics.velocity;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.slf4j.Logger;
 
@@ -17,53 +18,51 @@ import fr.samflix.vaniametrics.api.Version;
 import fr.samflix.vaniametrics.core.Exporter;
 
 /**
- * Le point d'entrée Velocity.
- *
- * <p>Symétrique de {@code PaperPlugin} : il construit la plateforme et démarre l'exportateur. Tout
- * le reste — registre, format, serveur HTTP, modules — est le même code que côté Paper.
+ * Velocity entry point. The counterpart of {@code PaperPlugin}: builds the platform and starts
+ * the exporter; registry, format, HTTP server and collector plugins share the same code.
  */
 @Plugin(
 		id = "vaniametrics",
 		name = "VaniaMetrics",
-		version = Version.VALEUR,
-		description = "Expose les métriques du réseau au format Prometheus.",
+		version = Version.VALUE,
+		description = "Exposes network metrics in the Prometheus format.",
 		authors = {"mc-vania"})
 public final class VelocityPlugin {
 
 	private final ProxyServer proxy;
-	private final Logger journal;
-	private final Path repertoire;
+	private final Logger logger;
+	private final Path dataDirectory;
 
-	private Exporter exportateur;
+	private Exporter exporter;
 
 	@Inject
-	public VelocityPlugin(ProxyServer proxy, Logger journal, @DataDirectory Path repertoire) {
+	public VelocityPlugin(ProxyServer proxy, Logger logger, @DataDirectory Path dataDirectory) {
 		this.proxy = proxy;
-		this.journal = journal;
-		this.repertoire = repertoire;
+		this.logger = logger;
+		this.dataDirectory = dataDirectory;
 	}
 
 	@Subscribe
 	public void onInit(ProxyInitializeEvent e) {
-		VelocityPlatform plateforme = new VelocityPlatform(proxy, journal, repertoire, this);
-		Config config = Config.charger(plateforme);
-		exportateur = new Exporter(plateforme, config);
+		VelocityPlatform platform = new VelocityPlatform(proxy, logger, dataDirectory, this);
+		Config config = Config.load(platform);
+		exporter = new Exporter(platform, config);
 
-		if (config.collecteurActif("events", true)) {
-			proxy.getEventManager().register(this, new ProxyEventListener(exportateur.registre()));
+		if (config.isCollectorEnabled("events", true)) {
+			proxy.getEventManager().register(this, new ProxyEventListener(exporter.registry()));
 		}
 
 		try {
-			exportateur.demarrer(java.util.List.of(new ProxyCollector(proxy, config)));
-		} catch (Exception erreur) {
-			journal.error("démarrage impossible", erreur);
+			exporter.start(List.of(new ProxyCollector(proxy, config)));
+		} catch (Exception error) {
+			logger.error("failed to start", error);
 		}
 	}
 
 	@Subscribe
 	public void onShutdown(ProxyShutdownEvent e) {
-		if (exportateur != null) {
-			exportateur.arreter();
+		if (exporter != null) {
+			exporter.stop();
 		}
 	}
 }

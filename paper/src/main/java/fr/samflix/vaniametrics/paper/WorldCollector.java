@@ -1,6 +1,7 @@
 package fr.samflix.vaniametrics.paper;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import org.bukkit.Bukkit;
@@ -13,103 +14,112 @@ import fr.samflix.vaniametrics.api.Gauge;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * Les mondes : entités, blocs-entités, chunks.
+ * Worlds: entities, tile entities, chunks.
  *
- * <p>TROIS COMPTEURS EN O(1), ET C'EST LA RAISON D'ÊTRE DE CE COLLECTEUR. Paper expose
- * {@code getEntityCount()}, {@code getTileEntityCount()} et {@code getChunkCount()} : des
- * compteurs déjà tenus par le serveur, lisibles sans rien parcourir. La plupart des exportateurs
- * font {@code getEntities().size()}, qui CONSTRUIT une liste de toutes les entités du monde à
- * chaque scrape — sur un serveur chargé, l'exportateur devient alors lui-même une source de lag.
+ * <p>Built on three O(1) counters. Paper exposes {@code getEntityCount()},
+ * {@code getTileEntityCount()} and {@code getChunkCount()}, counters the server already keeps.
+ * Most exporters call {@code getEntities().size()}, which builds a list of every entity in the
+ * world on each scrape; on a busy server the exporter becomes a source of lag itself.
  *
- * <p>LE DÉTAIL PAR TYPE, LUI, EST FORCÉMENT EN O(n) — il faut bien regarder chaque entité. Il est
- * donc en fond et non au scrape, et il est BORNÉ : seuls les types qui dépassent un seuil sont
- * publiés. Sans cela, cent types d'entités sur trois mondes feraient trois cents séries
- * temporelles pour compter des valeurs à zéro.
+ * <p>The per-type breakdown is necessarily O(n), since every entity has to be looked at. So it
+ * runs in the background, and it is bounded: only types above a threshold are published.
+ * Otherwise a hundred entity types across three worlds would make three hundred time series
+ * counting zeros.
  */
 final class WorldCollector implements Collector {
 
-	private final int seuilType;
+	private final int typeThreshold;
 
-	private Gauge entites;
-	private Gauge blocsEntites;
+	private Gauge entities;
+	private Gauge tileEntities;
 	private Gauge chunks;
-	private Gauge joueurs;
-	private Gauge parType;
-	private Gauge tempsMonde;
-	private Gauge orage;
+	private Gauge players;
+	private Gauge byType;
+	private Gauge worldTime;
+	private Gauge weather;
 
 	WorldCollector(Config config) {
-		this.seuilType = config.entier("collector.world.entity_type_threshold", 5);
+		this.typeThreshold = config.getInt("collector.world.entity_type_threshold", 5);
 	}
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "world";
 	}
 
 	@Override
-	public boolean filPrincipal() {
+	public boolean needsMainThread() {
 		return true;
 	}
 
 	@Override
-	public boolean enFond() {
-		// En fond à cause du seul détail par type. Le reste tiendrait au scrape, mais séparer
-		// ferait deux collecteurs pour un même sujet — et dix secondes de retard sur un nombre
-		// d'entités n'a jamais changé un diagnostic.
+	public boolean isBackground() {
+		// Because of the per-type breakdown alone. The rest would fit on scrape, but splitting would
+		// make two collectors for one subject, and ten seconds of delay on an entity count has
+		// never changed a diagnosis.
 		return true;
 	}
 
 	@Override
-	public long intervalleSecondes() {
+	public long intervalSeconds() {
 		return 15;
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
-		entites = r.gauge("world_entities", "Entités chargées. Compteur O(1) du serveur.", "world");
-		blocsEntites = r.gauge("world_tile_entities",
-				"Blocs-entités chargés : coffres, fours, hoppers. Les hoppers sont la première "
-						+ "cause de tick lourd sur un serveur de construction.",
+	public void declare(MetricRegistry r) {
+		entities = r.gauge("world_entities", "Loaded entities. O(1) server counter.", "world");
+		tileEntities = r.gauge("world_tile_entities",
+				"Loaded tile entities: chests, furnaces, hoppers. Hoppers are the first cause of "
+						+ "heavy ticks on a build server.",
 				"world");
-		chunks = r.gauge("world_chunks_loaded", "Chunks chargés.", "world");
-		joueurs = r.gauge("world_players", "Joueurs présents dans le monde.", "world");
-		parType = r.gauge("world_entities_by_type",
-				"Entités par type. Relevé en fond, et seuls les types au-dessus du seuil sont "
-						+ "publiés — sinon la cardinalité explose pour compter des zéros.",
+		chunks = r.gauge("world_chunks_loaded", "Loaded chunks.", "world");
+		players = r.gauge("world_players", "Players in the world.", "world");
+		byType = r.gauge("world_entities_by_type",
+				"Entities by type. Collected in the background, and only types above the "
+						+ "threshold are published, to keep cardinality bounded.",
 				"world", "entity_type");
-		tempsMonde = r.gauge("world_time_ticks", "Heure du monde, en ticks.", "world");
-		orage = r.gauge("world_weather",
-				"Météo. 0 = clair, 1 = pluie, 2 = orage.", "world");
+		worldTime = r.gauge("world_time_ticks", "World time, in ticks.", "world");
+		weather = r.gauge("world_weather",
+				"Weather. 0 = clear, 1 = rain, 2 = thunder.", "world");
 	}
 
 	@Override
-	public void relever(MetricRegistry r) {
-		// Les mondes vont et viennent — Multiverse en crée et en décharge. Sans remise à zéro,
-		// un monde déchargé garderait sa dernière valeur publiée pour toujours.
-		parType.clear();
+	public void collect(MetricRegistry r) {
+		// Worlds come and go (Multiverse loads and unloads them). Without a reset, an unloaded
+		// world would keep its last value forever.
+		byType.clear();
 
-		for (World monde : Bukkit.getWorlds()) {
-			String nom = monde.getName();
-			entites.set(monde.getEntityCount(), nom);
-			blocsEntites.set(monde.getTileEntityCount(), nom);
-			chunks.set(monde.getChunkCount(), nom);
-			joueurs.set(monde.getPlayers().size(), nom);
-			tempsMonde.set(monde.getFullTime(), nom);
-			orage.set(monde.isThundering() ? 2 : monde.hasStorm() ? 1 : 0, nom);
+		for (World world : Bukkit.getWorlds()) {
+			String name = world.getName();
+			entities.set(world.getEntityCount(), name);
+			tileEntities.set(world.getTileEntityCount(), name);
+			chunks.set(world.getChunkCount(), name);
+			players.set(world.getPlayers().size(), name);
+			worldTime.set(world.getFullTime(), name);
+			weather.set(weatherCode(world), name);
 
-			if (seuilType < 0) {
+			if (typeThreshold < 0) {
 				continue;
 			}
-			Map<String, Integer> compte = new HashMap<>();
-			for (Entity e : monde.getEntities()) {
-				compte.merge(e.getType().name().toLowerCase(java.util.Locale.ROOT), 1, Integer::sum);
+			Map<String, Integer> counts = new HashMap<>();
+			for (Entity e : world.getEntities()) {
+				counts.merge(e.getType().name().toLowerCase(Locale.ROOT), 1, Integer::sum);
 			}
-			compte.forEach((type, n) -> {
-				if (n >= seuilType) {
-					parType.set(n, nom, type);
+			counts.forEach((type, n) -> {
+				if (n >= typeThreshold) {
+					byType.set(n, name, type);
 				}
 			});
 		}
+	}
+
+	private static int weatherCode(World world) {
+		if (world.isThundering()) {
+			return 2;
+		}
+		if (world.hasStorm()) {
+			return 1;
+		}
+		return 0;
 	}
 }

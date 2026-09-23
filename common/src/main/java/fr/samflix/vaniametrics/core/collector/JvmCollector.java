@@ -13,104 +13,103 @@ import fr.samflix.vaniametrics.api.Gauge;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * La JVM : mémoire, ramasse-miettes, fils.
+ * The JVM: memory, garbage collection, threads.
  *
- * <p>Tout vient de {@code java.lang.management}, présent dans tout JDK, lisible sans privilège et
- * sans coût mesurable. C'est le collecteur le plus rentable du lot.
+ * <p>Everything comes from {@code java.lang.management}: in every JDK, readable without
+ * privileges, no measurable cost.
  *
- * <p>ATTENTION À LA LECTURE DU TAS. « Le tas est plein » ne veut rien dire : un tas G1 monte
- * toujours jusqu'à son seuil avant de collecter, c'est son fonctionnement normal. Ce qu'il faut
- * regarder, c'est le tas APRÈS collecte — donc la ligne {@code old gen} après un GC complet — et
- * le TAUX D'ALLOCATION, qui dit à quelle vitesse on remplit. Le second vient de spark, pas d'ici.
+ * <p>Reading the heap: "the heap is full" means nothing. A G1 heap always fills up to its
+ * threshold before collecting; that is normal. What matters is the heap after collection (the old
+ * gen after a full GC) and the allocation rate, which says how fast it fills. The latter comes
+ * from spark, not from here.
  */
 public final class JvmCollector implements Collector {
 
-	private Gauge memoire;
-	private Gauge memoirePool;
-	private Counter gcNombre;
-	private Counter gcTemps;
-	private Gauge fils;
-	private Gauge interblocages;
-	private Gauge tampons;
+	private Gauge memory;
+	private Gauge memoryPool;
+	private Counter gcCount;
+	private Counter gcTime;
+	private Gauge threads;
+	private Gauge deadlocked;
+	private Gauge buffers;
 	private Gauge classes;
-	private Gauge demarrage;
+	private Gauge uptime;
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "jvm";
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
-		memoire = r.gauge("jvm_memory_bytes",
-				"Mémoire de la JVM. area = heap|nonheap, state = used|committed|max|init.",
+	public void declare(MetricRegistry r) {
+		memory = r.gauge("jvm_memory_bytes",
+				"JVM memory. area = heap|nonheap, state = used|committed|max|init.",
 				"area", "state");
-		memoirePool = r.gauge("jvm_memory_pool_bytes",
-				"Mémoire par zone du ramasse-miettes (Eden, Survivor, Old, Metaspace).",
+		memoryPool = r.gauge("jvm_memory_pool_bytes",
+				"Memory per garbage collector pool (Eden, Survivor, Old, Metaspace).",
 				"pool", "state");
-		gcNombre = r.counter("jvm_gc_collections_total",
-				"Collectes effectuées, par ramasse-miettes.", "gc");
-		gcTemps = r.counter("jvm_gc_seconds_total",
-				"Temps cumulé de collecte. C'est du temps de collecte, PAS du temps d'arrêt du "
-						+ "monde — pour la vraie pause il faut JFR ou les journaux GC.",
+		gcCount = r.counter("jvm_gc_collections_total",
+				"Collections run, per garbage collector.", "gc");
+		gcTime = r.counter("jvm_gc_seconds_total",
+				"Cumulative collection time. This is collection time, NOT stop-the-world time; "
+						+ "for actual pauses use JFR or GC logs.",
 				"gc");
-		fils = r.gauge("jvm_threads", "Fils de la JVM. state = live|daemon|peak|started.", "state");
-		interblocages = r.gauge("jvm_threads_deadlocked",
-				"Fils en interblocage. Toute valeur non nulle est un incident.");
-		tampons = r.gauge("jvm_buffer_pool_bytes",
-				"Tampons hors tas. Ils comptent dans la mémoire du CONTENEUR mais pas dans le tas, "
-						+ "et c'est une cause classique d'OOM kill inexpliqué.",
+		threads = r.gauge("jvm_threads", "JVM threads. state = live|daemon|peak|started.", "state");
+		deadlocked = r.gauge("jvm_threads_deadlocked",
+				"Deadlocked threads. Any non-zero value is an incident.");
+		buffers = r.gauge("jvm_buffer_pool_bytes",
+				"Off-heap buffers. They count toward CONTAINER memory but not the heap, a classic "
+						+ "cause of unexplained OOM kills.",
 				"pool", "state");
-		classes = r.gauge("jvm_classes_loaded", "Classes chargées.");
-		demarrage = r.gauge("jvm_uptime_seconds", "Temps depuis le démarrage de la JVM.");
+		classes = r.gauge("jvm_classes_loaded", "Loaded classes.");
+		uptime = r.gauge("jvm_uptime_seconds", "Time since the JVM started.");
 	}
 
 	@Override
-	public void relever(MetricRegistry r) {
+	public void collect(MetricRegistry r) {
 		var mem = ManagementFactory.getMemoryMXBean();
-		poser(memoire, "heap", mem.getHeapMemoryUsage());
-		poser(memoire, "nonheap", mem.getNonHeapMemoryUsage());
+		setUsage(memory, "heap", mem.getHeapMemoryUsage());
+		setUsage(memory, "nonheap", mem.getNonHeapMemoryUsage());
 
 		for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
-			poser(memoirePool, pool.getName(), pool.getUsage());
+			setUsage(memoryPool, pool.getName(), pool.getUsage());
 		}
 
 		for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
-			// Les compteurs de la JVM sont cumulatifs depuis le démarrage, comme ceux de
-			// Prometheus : on POSE la valeur au lieu d'ajouter un delta, ce qui évite de tenir
-			// un état et reste juste même si un relevé est sauté.
-			gcNombre.mirror(gc.getCollectionCount(), gc.getName());
-			gcTemps.mirror(gc.getCollectionTime() / 1000.0, gc.getName());
+			// JVM counters are cumulative since startup, like Prometheus counters: mirror the
+			// value instead of adding deltas.
+			gcCount.mirror(gc.getCollectionCount(), gc.getName());
+			gcTime.mirror(gc.getCollectionTime() / 1000.0, gc.getName());
 		}
 
 		ThreadMXBean t = ManagementFactory.getThreadMXBean();
-		fils.set(t.getThreadCount(), "live");
-		fils.set(t.getDaemonThreadCount(), "daemon");
-		fils.set(t.getPeakThreadCount(), "peak");
-		fils.set(t.getTotalStartedThreadCount(), "started");
-		long[] bloques = t.findDeadlockedThreads();
-		interblocages.set(bloques == null ? 0 : bloques.length);
+		threads.set(t.getThreadCount(), "live");
+		threads.set(t.getDaemonThreadCount(), "daemon");
+		threads.set(t.getPeakThreadCount(), "peak");
+		threads.set(t.getTotalStartedThreadCount(), "started");
+		long[] ids = t.findDeadlockedThreads();
+		deadlocked.set(ids == null ? 0 : ids.length);
 
 		for (BufferPoolMXBean pool : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
-			tampons.set(pool.getMemoryUsed(), pool.getName(), "used");
-			tampons.set(pool.getTotalCapacity(), pool.getName(), "capacity");
-			tampons.set(pool.getCount(), pool.getName(), "count");
+			buffers.set(pool.getMemoryUsed(), pool.getName(), "used");
+			buffers.set(pool.getTotalCapacity(), pool.getName(), "capacity");
+			buffers.set(pool.getCount(), pool.getName(), "count");
 		}
 
 		classes.set(ManagementFactory.getClassLoadingMXBean().getLoadedClassCount());
-		demarrage.set(ManagementFactory.getRuntimeMXBean().getUptime() / 1000.0);
+		uptime.set(ManagementFactory.getRuntimeMXBean().getUptime() / 1000.0);
 	}
 
-	private void poser(Gauge g, String zone, MemoryUsage u) {
+	private void setUsage(Gauge g, String area, MemoryUsage u) {
+		// A memory pool that is no longer valid returns null.
 		if (u == null) {
 			return;
 		}
-		g.set(u.getUsed(), zone, "used");
-		g.set(u.getCommitted(), zone, "committed");
-		g.set(u.getInit(), zone, "init");
-		// -1 signifie « pas de maximum ». Publier -1 ferait un graphique absurde ; NaN dit
-		// « inconnu », que Prometheus et Grafana savent tous deux ignorer.
-		g.set(u.getMax() < 0 ? Double.NaN : u.getMax(), zone, "max");
+		g.set(u.getUsed(), area, "used");
+		g.set(u.getCommitted(), area, "committed");
+		g.set(u.getInit(), area, "init");
+		// -1 means "no maximum". Publishing -1 would draw a nonsensical graph; NaN means
+		// "unknown", which Prometheus and Grafana both skip.
+		g.set(u.getMax() < 0 ? Double.NaN : u.getMax(), area, "max");
 	}
-
 }

@@ -1,6 +1,6 @@
-// L'API se compile SEULE, et c'est la garantie qui compte : si elle compile sans
-// paper-api ni velocity-api, c'est qu'elle n'en dépend pas, et qu'un collecteur
-// tiers peut s'y lier sans rien traîner. Aucune dépendance ici, et ça doit durer.
+// The API compiles on its own, and that is the guarantee that matters: if it compiles without
+// paper-api or velocity-api, it does not depend on them, and a third-party collector can link
+// against it without pulling anything in. Keep this module dependency-free.
 plugins {
     `java-library`
     `maven-publish`
@@ -16,7 +16,7 @@ publishing {
             from(components["java"])
             pom {
                 name = "VaniaMetrics API"
-                description = "Interface publique de l'exportateur Prometheus VaniaMetrics."
+                description = "Public API of the VaniaMetrics Prometheus exporter."
             }
         }
     }

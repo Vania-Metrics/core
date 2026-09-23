@@ -1,70 +1,68 @@
 package fr.samflix.vaniametrics.api;
 
 /**
- * Une source de métriques.
+ * A source of metrics.
  *
- * <p>DEUX RÉGIMES, ET LES CONFONDRE FABRIQUE LE LAG QU'ON PRÉTEND MESURER :
+ * <p>There are two modes, and mixing them up creates the very lag the plugin is meant to measure:
  *
  * <ul>
- *   <li><b>au scrape</b> ({@link #enFond()} faux) — appelé par le fil HTTP au moment où Prometheus
- *       interroge. Réservé à ce qui coûte quelques microsecondes : lire un compteur de la JVM,
- *       un fichier de cgroup, {@code World.getEntityCount()}. Une quinzaine de millisecondes ici
- *       et c'est un tick perdu toutes les quinze secondes.
- *   <li><b>en fond</b> ({@link #enFond()} vrai) — appelé par une tâche périodique, qui dépose le
- *       résultat dans les instruments. Le scrape rend alors la dernière valeur connue. C'est le
- *       régime de tout ce qui parcourt une liste, interroge une base ou lit un disque.
+ *   <li><b>on scrape</b> ({@link #isBackground()} false): called by the HTTP thread while
+ *       Prometheus waits. Only for things that cost microseconds: a JVM counter, a cgroup file,
+ *       {@code World.getEntityCount()}. Fifteen milliseconds here is a lost tick every scrape.
+ *   <li><b>background</b> ({@link #isBackground()} true): called by a periodic task that stores
+ *       the result in the instruments; the scrape returns the last known value. Use it for
+ *       anything that walks a list, queries a database or reads a disk.
  * </ul>
  *
- * <p>UN COLLECTEUR QUI ÉCHOUE NE DOIT PAS EMPORTER LE SCRAPE. {@link Exporter} attrape ses
- * exceptions, les compte dans {@code mc_exporter_scrape_errors_total} et passe au suivant : une
- * base injoignable ne doit pas faire disparaître le TPS.
+ * <p>A failing collector must not take the scrape down with it. The exporter catches its
+ * exceptions, counts them in {@code mc_exporter_scrape_errors_total} and moves on: an unreachable
+ * database must not make TPS disappear.
  */
 public interface Collector {
 
-	/** Un nom court, qui sert d'étiquette dans les métriques de l'exportateur et de clé de config. */
-	String nom();
+	/** A short name, used as a label in the exporter's own metrics and as a config key. */
+	String name();
 
 	/**
-	 * D'où viennent ces chiffres.
+	 * Where the numbers come from.
 	 *
-	 * <p>« core » pour ce que le serveur ou la machine exposent d'eux-mêmes ; le NOM DU PLUGIN
-	 * sinon — « LuckPerms », « BetonQuest », « spark ». Publié dans
-	 * {@code mc_exporter_collector_info}, ce qui rend l'origine d'une métrique interrogeable en
-	 * PromQL au lieu de se lire dans un document qui finira par mentir :
+	 * <p>{@code "core"} for what the server or the machine exposes by itself, otherwise the plugin
+	 * name: "LuckPerms", "BetonQuest", "spark". Published in {@code mc_exporter_collector_info},
+	 * so the origin of a metric can be queried in PromQL instead of looked up in a document that
+	 * will eventually be wrong:
 	 *
 	 * <pre>{@code mc_exporter_collector_info{collector="quest"}  ->  source="BetonQuest"}</pre>
 	 */
-	default String origine() {
+	default String source() {
 		return "core";
 	}
 
-	/** Déclare les instruments. Appelé une fois, au démarrage. */
-	default void declarer(MetricRegistry r) {}
+	/** Declares the instruments. Called once, when the collector is registered. */
+	default void declare(MetricRegistry r) {}
 
-	/** Relève les valeurs. Appelé au scrape, ou périodiquement si {@link #enFond()}. */
-	void relever(MetricRegistry r) throws Exception;
+	/** Updates the values. Called on every scrape, or periodically if {@link #isBackground()}. */
+	void collect(MetricRegistry r) throws Exception;
 
-	/** Voir la note de classe. Faux par défaut : on ne passe en fond que sur preuve de coût. */
-	default boolean enFond() {
+	/** See the class docs. False by default: only move to the background once the cost is proven. */
+	default boolean isBackground() {
 		return false;
 	}
 
-	/** L'intervalle, en secondes, pour un collecteur de fond. Ignoré sinon. */
-	default long intervalleSecondes() {
+	/** Interval in seconds for a background collector. Ignored otherwise. */
+	default long intervalSeconds() {
 		return 30;
 	}
 
 	/**
-	 * Le relevé doit-il courir sur le fil principal du serveur ?
+	 * Whether {@link #collect} must run on the server's main thread.
 	 *
-	 * <p>Vrai pour tout ce qui touche à l'API Bukkit — la liste des mondes, les entités, les
-	 * joueurs. Faux pour la JVM, les cgroups, le disque et le SQL, qui n'ont rien à y faire et
-	 * voleraient du temps de tick pour rien.
+	 * <p>True for anything that touches the Bukkit API: worlds, entities, players. False for the
+	 * JVM, cgroups, disk and SQL, which would only steal tick time there.
 	 */
-	default boolean filPrincipal() {
+	default boolean needsMainThread() {
 		return false;
 	}
 
-	/** Libère ce qui doit l'être à l'arrêt : connexions, écouteurs. */
-	default void fermer() {}
+	/** Releases resources on unregister: connections, listeners. */
+	default void close() {}
 }

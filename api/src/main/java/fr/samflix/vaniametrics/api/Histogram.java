@@ -1,54 +1,51 @@
 package fr.samflix.vaniametrics.api;
 
 /**
- * Une distribution : durées de tick, ping des joueurs, longueur des sessions.
+ * A distribution: tick durations, player ping, session length.
  *
- * <p>POURQUOI PAS UNE MOYENNE. Parce qu'une moyenne ment sur exactement ce qui compte. Un serveur
- * dont 99 % des ticks tiennent en 1 ms et 1 % en 400 ms affiche 5 ms de moyenne — un chiffre
- * rassurant qui décrit un serveur qui saccade quatre fois par seconde. L'histogramme garde la
- * forme de la distribution et laisse Grafana calculer n'importe quel quantile après coup, sur
- * n'importe quelle fenêtre, avec {@code histogram_quantile()}.
+ * <p>Not an average, because an average hides exactly what matters. A server where 99% of ticks
+ * take 1 ms and 1% take 400 ms averages 5 ms: a reassuring number for a server that stutters four
+ * times a second. A histogram keeps the shape of the distribution and lets Grafana compute any
+ * quantile afterwards, over any window, with {@code histogram_quantile()}.
  *
- * <p>CE QUE PROMETHEUS ATTEND, et qui n'est pas négociable :
+ * <p>What Prometheus requires:
  * <ul>
- *   <li>des seaux <b>cumulatifs</b> — le seau {@code le="0.05"} compte tout ce qui est
- *       ≤ 50 ms, y compris ce qui est déjà dans {@code le="0.01"} ;
- *   <li>un seau {@code le="+Inf"} final, égal au compte total ;
- *   <li>les séries {@code _sum} et {@code _count} à côté.
+ *   <li><b>cumulative</b> buckets: {@code le="0.05"} counts everything ≤ 50 ms, including what is
+ *       already in {@code le="0.01"};
+ *   <li>a final {@code le="+Inf"} bucket equal to the total count;
+ *   <li>{@code _sum} and {@code _count} series alongside.
  * </ul>
  *
- * <p>LE COÛT EST EN SÉRIES : un histogramme de 12 seaux publie 14 séries temporelles par
- * combinaison d'étiquettes. C'est pour cette raison qu'aucun histogramme de ce plugin n'est
- * étiqueté par joueur — voir la note sur la cardinalité dans docs/metriques.md.
+ * <p>The cost is in series: a 12-bucket histogram publishes 14 time series per label combination.
+ * That is why no histogram in this plugin is labelled by player.
  */
 public final class Histogram extends Metric {
 
 	/**
-	 * Des secondes, de 1 ms à 2 s, taillées pour une boucle de jeu à 50 ms le tick.
+	 * Seconds, from 1 ms to 2 s, sized for a game loop running at 50 ms per tick.
 	 *
-	 * <p>Les seuils ne sont pas décoratifs : 0,05 est la durée d'un tick plein, et c'est LE seuil
-	 * qui sépare « le serveur suit » de « le serveur prend du retard ». Les seaux au-dessus disent
-	 * de combien il décroche.
+	 * <p>0.05 is a full tick and the threshold between "the server keeps up" and "the server falls
+	 * behind". The buckets above it tell by how much.
 	 */
-	public static final double[] SECONDES_TICK = {
+	public static final double[] TICK_SECONDS = {
 		0.001, 0.005, 0.010, 0.025, 0.050, 0.075, 0.100, 0.250, 0.500, 1.0, 2.0
 	};
 
-	/** Des secondes, de 5 ms à 2 s : le ping d'un joueur, du LAN à l'autre bout du monde. */
-	public static final double[] SECONDES_PING = {
+	/** Seconds, from 5 ms to 2 s: player ping, from LAN to the other side of the world. */
+	public static final double[] PING_SECONDS = {
 		0.005, 0.010, 0.025, 0.050, 0.100, 0.150, 0.200, 0.300, 0.500, 1.0, 2.0
 	};
 
-	/** Des secondes, d'une minute à six heures : la durée d'une session de jeu. */
-	public static final double[] SECONDES_SESSION = {
+	/** Seconds, from one minute to six hours: the length of a play session. */
+	public static final double[] SESSION_SECONDS = {
 		60, 300, 900, 1800, 3600, 7200, 14400, 21600
 	};
 
-	final double[] seuils;
+	final double[] bounds;
 
-	Histogram(String name, String help, double[] seuils, String... labelNames) {
+	Histogram(String name, String help, double[] bounds, String... labelNames) {
 		super(name, help, labelNames);
-		this.seuils = seuils;
+		this.bounds = bounds;
 	}
 
 	@Override
@@ -57,21 +54,21 @@ public final class Histogram extends Metric {
 	}
 
 	/**
-	 * Range une observation.
+	 * Records an observation.
 	 *
-	 * <p>Le tableau interne fait {@code seuils.length + 2} cases : un compteur par seuil, puis la
-	 * somme, puis le compte total. Le seau {@code +Inf} n'est pas stocké — il vaut le compte.
+	 * <p>The internal array has {@code bounds.length + 2} slots: one count per bound, then the sum,
+	 * then the total count. The {@code +Inf} bucket is not stored; it equals the count.
 	 */
-	public void observe(double valeur, String... etiquettes) {
-		double[] s = serie(seuils.length + 2, etiquettes);
+	public void observe(double value, String... labels) {
+		double[] s = seriesFor(bounds.length + 2, labels);
 		synchronized (s) {
-			for (int i = 0; i < seuils.length; i++) {
-				if (valeur <= seuils[i]) {
+			for (int i = 0; i < bounds.length; i++) {
+				if (value <= bounds[i]) {
 					s[i]++;
 				}
 			}
-			s[seuils.length] += valeur;
-			s[seuils.length + 1]++;
+			s[bounds.length] += value;
+			s[bounds.length + 1]++;
 		}
 	}
 }

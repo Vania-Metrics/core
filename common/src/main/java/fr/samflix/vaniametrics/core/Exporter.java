@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -22,53 +23,49 @@ import fr.samflix.vaniametrics.core.collector.DiskCollector;
 import fr.samflix.vaniametrics.core.collector.JvmCollector;
 
 /**
- * L'orchestrateur, et l'implémentation de l'API publique.
+ * The orchestrator, and the implementation of the public API.
  *
- * <p>Il tient le registre, les collecteurs et le serveur HTTP. Les adaptateurs le démarrent ; les
- * modules — qui sont des plugins à part, dans leurs propres jars — s'y enregistrent par
- * {@link VaniaMetrics}.
+ * <p>Holds the registry, the collectors and the HTTP server. Platform adapters start it; collector
+ * plugins, which ship in their own jars, register through {@link VaniaMetrics}.
  *
- * <p>L'ENREGISTREMENT EST DYNAMIQUE, et c'est ce qui change tout par rapport à une liste figée au
- * démarrage : un module activé après le noyau est déclaré et programmé sur-le-champ, et un module
- * déchargé se retire proprement. Sans quoi le scrape continuerait d'appeler du code dont le
- * classloader vient de disparaître.
+ * <p>Registration is dynamic: a collector registered after the core started is declared and
+ * scheduled right away, and one whose plugin is unloaded is removed cleanly. Otherwise the scrape
+ * would keep calling code whose classloader is gone.
  */
 public final class Exporter implements VaniaMetrics {
 
-	private final Platform plateforme;
+	private final Platform platform;
 	private final Config config;
-	private final MetricRegistry registre = new MetricRegistry();
+	private final MetricRegistry registry = new MetricRegistry();
 
-	/** CopyOnWrite : lue par le fil HTTP à chaque scrape, écrite quand un module arrive. */
-	private final List<Collector> auScrape = new CopyOnWriteArrayList<>();
+	/** Copy-on-write: read by the HTTP thread on every scrape, written when a collector registers. */
+	private final List<Collector> onScrape = new CopyOnWriteArrayList<>();
 
-	private final Map<String, AtomicLong> dernierReleve = new ConcurrentHashMap<>();
-	private final Map<Collector, AtomicBoolean> actifs = new ConcurrentHashMap<>();
+	private final Map<String, AtomicLong> lastCollection = new ConcurrentHashMap<>();
+	private final Map<Collector, AtomicBoolean> active = new ConcurrentHashMap<>();
 
 	private MetricsHttpServer http;
 
-	private Histogram dureeScrape;
-	private Histogram dureeCollecteur;
-	private Counter erreurs;
-	private Gauge ageFond;
-	private Gauge debout;
-	private Gauge inventaire;
+	private Histogram scrapeDuration;
+	private Histogram collectorDuration;
+	private Counter errors;
+	private Gauge backgroundAge;
+	private Gauge up;
+	private Gauge collectorInfo;
 
-	public Exporter(Platform plateforme, Config config) {
-		this.plateforme = plateforme;
+	public Exporter(Platform platform, Config config) {
+		this.platform = platform;
 		this.config = config;
 	}
 
-	// ---------------------------------------------------------------- API publique
-
 	@Override
-	public MetricRegistry registre() {
-		return registre;
+	public MetricRegistry registry() {
+		return registry;
 	}
 
 	@Override
-	public Platform plateforme() {
-		return plateforme;
+	public Platform platform() {
+		return platform;
 	}
 
 	@Override
@@ -78,184 +75,181 @@ public final class Exporter implements VaniaMetrics {
 
 	@Override
 	public String version() {
-		return Version.VALEUR;
+		return Version.VALUE;
 	}
 
 	@Override
-	public void enregistrer(Collector c) {
-		if (actifs.containsKey(c)) {
+	public void register(Collector c) {
+		if (active.containsKey(c)) {
 			return;
 		}
-		if (!config.collecteurActif(c.nom(), true)) {
-			plateforme.info("collecteur " + c.nom() + " — désactivé par la configuration");
+		if (!config.isCollectorEnabled(c.name(), true)) {
+			platform.info("collector " + c.name() + ": disabled in configuration");
 			return;
 		}
-		AtomicBoolean vivant = new AtomicBoolean(true);
-		actifs.put(c, vivant);
-		c.declarer(registre);
+		AtomicBoolean alive = new AtomicBoolean(true);
+		active.put(c, alive);
+		c.declare(registry);
 
-		if (c.enFond()) {
-			long intervalle = config.duree("collector." + c.nom() + ".interval", c.intervalleSecondes());
-			dernierReleve.put(c.nom(), new AtomicLong(0));
-			// Le drapeau est lu à CHAQUE exécution : ni Bukkit ni Velocity ne donnent un moyen
-			// simple d'annuler une tâche depuis un code qui ne l'a pas créée, et un module
-			// déchargé doit cesser d'être appelé immédiatement.
-			plateforme.repeter(() -> {
-				if (vivant.get()) {
-					relever(c);
+		if (c.isBackground()) {
+			long interval = config.getSeconds("collector." + c.name() + ".interval", c.intervalSeconds());
+			lastCollection.put(c.name(), new AtomicLong(0));
+			// The flag is checked on every run: neither Bukkit nor Velocity offers a simple way to
+			// cancel a task from code that did not create it, and an unloaded collector must stop
+			// being called immediately.
+			platform.scheduleRepeating(() -> {
+				if (alive.get()) {
+					collect(c);
 				}
-			}, intervalle);
-			plateforme.info("collecteur " + c.nom() + " — en fond, toutes les " + intervalle + " s");
+			}, interval);
+			platform.info("collector " + c.name() + ": background, every " + interval + " s");
 		} else {
-			auScrape.add(c);
-			plateforme.info("collecteur " + c.nom() + " — au scrape");
+			onScrape.add(c);
+			platform.info("collector " + c.name() + ": on scrape");
 		}
-		inventaire.set(1, c.nom(), c.origine(), c.enFond() ? "background" : "scrape");
+		publishInfo(c);
 	}
 
 	@Override
-	public void retirer(Collector c) {
-		AtomicBoolean vivant = actifs.remove(c);
-		if (vivant == null) {
+	public void unregister(Collector c) {
+		AtomicBoolean alive = active.remove(c);
+		if (alive == null) {
 			return;
 		}
-		vivant.set(false);
-		auScrape.remove(c);
-		dernierReleve.remove(c.nom());
-		// L'inventaire est réécrit en entier : retirer UNE série demanderait de connaître ses
-		// étiquettes exactes, et republier le reste coûte trois lignes.
-		inventaire.clear();
-		actifs.keySet().forEach(
-				a -> inventaire.set(1, a.nom(), a.origine(), a.enFond() ? "background" : "scrape"));
+		alive.set(false);
+		onScrape.remove(c);
+		lastCollection.remove(c.name());
+		// Rewritten in full: removing a single series would require its exact label values, and
+		// republishing the rest costs a few lines.
+		collectorInfo.clear();
+		active.keySet().forEach(this::publishInfo);
 		try {
-			c.fermer();
+			c.close();
 		} catch (Exception e) {
-			plateforme.erreur("fermeture du collecteur " + c.nom(), e);
+			platform.error("closing collector " + c.name(), e);
 		}
-		plateforme.info("collecteur " + c.nom() + " — retiré");
+		platform.info("collector " + c.name() + ": unregistered");
 	}
 
-	// ---------------------------------------------------------------- cycle de vie
+	private void publishInfo(Collector c) {
+		collectorInfo.set(1, c.name(), c.source(), c.isBackground() ? "background" : "scrape");
+	}
 
-	/** @param natifs les collecteurs de la plateforme, fournis par l'adaptateur. */
-	public void demarrer(List<Collector> natifs) throws Exception {
-		declarerSesPropresMetriques();
+	/** @param platformCollectors the platform-specific collectors, supplied by the adapter */
+	public void start(List<Collector> platformCollectors) throws Exception {
+		declareOwnMetrics();
 
-		// Les collecteurs du noyau tournent partout : la JVM, le cgroup et le disque n'ont rien
-		// de spécifique à Minecraft, et leur absence côté proxy serait un trou inexplicable.
-		enregistrer(new JvmCollector());
-		enregistrer(new CgroupCollector(plateforme));
-		enregistrer(new DiskCollector(plateforme, config));
-		natifs.forEach(this::enregistrer);
+		// Core collectors run everywhere: the JVM, cgroup and disk have nothing Minecraft-specific,
+		// and leaving them out on the proxy would be an unexplained gap.
+		register(new JvmCollector());
+		register(new CgroupCollector(platform));
+		register(new DiskCollector(platform, config));
+		platformCollectors.forEach(this::register);
 
-		registre.gauge("build_info",
-						"Toujours 1. La version se lit dans les étiquettes — c'est l'idiome Prometheus "
-								+ "pour publier une chaîne, qu'il ne sait pas stocker autrement.",
+		registry.gauge("build_info",
+						"Always 1. The version is in the labels, the Prometheus idiom for publishing "
+								+ "a string.",
 						"version", "platform", "server_version", "server")
-				.set(1, Version.VALEUR, plateforme.type(), plateforme.versionServeur(),
-						plateforme.nomServeur());
-		debout.set(1);
+				.set(1, Version.VALUE, platform.type(), platform.serverVersion(),
+						platform.serverName());
+		up.set(1);
 
-		http = new MetricsHttpServer(plateforme, config, this::scraper);
-		http.demarrer();
+		http = new MetricsHttpServer(platform, config, this::scrape);
+		http.start();
 
-		// EN DERNIER, une fois tout en place : à partir d'ici les modules peuvent s'enregistrer,
-		// et ils ne doivent pas trouver un noyau à moitié démarré.
-		VaniaMetricsProvider.definir(this);
+		// Last, once everything is in place: from here on collector plugins can register, and they
+		// must not find a half-started core.
+		VaniaMetricsProvider.set(this);
 	}
 
-	public void arreter() {
-		VaniaMetricsProvider.definir(null);
+	public void stop() {
+		VaniaMetricsProvider.set(null);
 		if (http != null) {
-			http.arreter();
+			http.stop();
 		}
-		actifs.keySet().forEach(this::retirer);
+		active.keySet().forEach(this::unregister);
 	}
-
-	// ---------------------------------------------------------------- relevés
 
 	/**
-	 * Un relevé, chronométré et protégé.
+	 * Runs one collection, timed and guarded.
 	 *
-	 * <p>L'EXCEPTION NE REMONTE PAS. Un collecteur qui échoue est compté et oublié : une base
-	 * injoignable ne doit pas faire disparaître le TPS de Grafana, qui est précisément ce qu'on
-	 * regarde quand quelque chose ne va pas.
+	 * <p>Exceptions do not propagate. A failing collector is counted and skipped: an unreachable
+	 * database must not make TPS disappear from Grafana, which is exactly what you look at when
+	 * something goes wrong.
 	 */
-	private void relever(Collector c) {
-		long debut = System.nanoTime();
+	private void collect(Collector c) {
+		long start = System.nanoTime();
 		try {
-			if (c.filPrincipal()) {
-				plateforme.surFilPrincipal(() -> {
+			if (c.needsMainThread()) {
+				platform.runOnMainThread(() -> {
 					try {
-						c.relever(registre);
+						c.collect(registry);
 					} catch (Exception e) {
 						throw new RuntimeException(e);
 					}
 				});
 			} else {
-				c.relever(registre);
+				c.collect(registry);
 			}
-			AtomicLong t = dernierReleve.get(c.nom());
+			AtomicLong t = lastCollection.get(c.name());
 			if (t != null) {
 				t.set(System.currentTimeMillis());
 			}
-		} catch (java.util.concurrent.TimeoutException e) {
-			// LE FIL PRINCIPAL N'A PAS RÉPONDU EN CINQ SECONDES. C'est attendu au DÉMARRAGE, où
-			// il charge les mondes et les plugins : le premier scrape tombe dessus, les suivants
-			// passent. Constaté une fois, jamais rediffusé.
+		} catch (TimeoutException e) {
+			// The main thread did not answer within five seconds. Expected during startup, while
+			// it loads worlds and plugins: the first scrape hits it, the next ones pass. Seen once,
+			// never again.
 			//
-			// Compté comme les autres erreurs — mc_exporter_scrape_errors_total ne ment pas —
-			// mais sans pile d'appel : cinquante lignes de trace pour un état qui se répare seul
-			// noient les vraies pannes dans les journaux.
-			erreurs.inc(c.nom());
-			plateforme.avertir("collecteur " + c.nom() + " — le fil principal n'a pas répondu en "
-					+ "5 s ; normal si le serveur démarre encore");
+			// Counted like any other error, so mc_exporter_scrape_errors_total stays honest, but
+			// logged without a stack trace: fifty lines of trace for a state that fixes itself bury
+			// the real failures.
+			errors.inc(c.name());
+			platform.warn("collector " + c.name() + ": main thread did not respond within 5 s; "
+					+ "expected while the server is still starting");
 		} catch (Throwable e) {
-			// Throwable : un module dont le plugin visé a changé de version échoue en
-			// NoSuchMethodError, qui est une Error. Le compter vaut mieux que tout perdre.
-			erreurs.inc(c.nom());
-			plateforme.erreur("collecteur " + c.nom(), e);
+			// Throwable: a collector whose target plugin changed version fails with
+			// NoSuchMethodError, which is an Error. Counting it beats losing everything.
+			errors.inc(c.name());
+			platform.error("collector " + c.name(), e);
 		} finally {
-			dureeCollecteur.observe((System.nanoTime() - debut) / 1e9, c.nom());
+			collectorDuration.observe((System.nanoTime() - start) / 1e9, c.name());
 		}
 	}
 
-	/** Appelé par le fil HTTP. Doit rendre la main vite : voir {@link Collector}. */
-	private String scraper() {
-		long debut = System.nanoTime();
-		for (Collector c : auScrape) {
-			relever(c);
+	/** Called by the HTTP thread. Must return quickly: see {@link Collector}. */
+	private String scrape() {
+		long start = System.nanoTime();
+		for (Collector c : onScrape) {
+			collect(c);
 		}
-		long maintenant = System.currentTimeMillis();
-		dernierReleve.forEach((nom, t) -> {
-			long quand = t.get();
-			ageFond.set(quand == 0 ? Double.NaN : (maintenant - quand) / 1000.0, nom);
+		long now = System.currentTimeMillis();
+		lastCollection.forEach((name, t) -> {
+			long when = t.get();
+			backgroundAge.set(when == 0 ? Double.NaN : (now - when) / 1000.0, name);
 		});
-		String texte = registre.rendre();
-		dureeScrape.observe((System.nanoTime() - debut) / 1e9);
-		return texte;
+		String text = registry.render();
+		scrapeDuration.observe((System.nanoTime() - start) / 1e9);
+		return text;
 	}
 
-	private void declarerSesPropresMetriques() {
-		dureeScrape = registre.histogram("exporter_scrape_duration_seconds",
-				"Temps passé à répondre à un scrape. Si ça monte, c'est l'exportateur le problème.",
+	private void declareOwnMetrics() {
+		scrapeDuration = registry.histogram("exporter_scrape_duration_seconds",
+				"Time spent answering a scrape. If this grows, the exporter is the problem.",
 				new double[] {0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0.250, 1.0});
-		dureeCollecteur = registre.histogram("exporter_collector_duration_seconds",
-				"Temps d'un relevé, collecteur par collecteur.",
+		collectorDuration = registry.histogram("exporter_collector_duration_seconds",
+				"Duration of one collection, per collector.",
 				new double[] {0.001, 0.005, 0.010, 0.050, 0.100, 0.500, 1.0, 5.0}, "collector");
-		erreurs = registre.counter("exporter_scrape_errors_total",
-				"Relevés qui ont levé une exception. Un collecteur en panne n'arrête pas les autres.",
+		errors = registry.counter("exporter_scrape_errors_total",
+				"Collections that threw. A failing collector does not stop the others.",
 				"collector");
-		ageFond = registre.gauge("exporter_background_task_age_seconds",
-				"Âge du dernier relevé d'un collecteur de fond. C'est LA métrique qui distingue "
-						+ "« rien ne bouge » de « plus personne ne mesure ».",
+		backgroundAge = registry.gauge("exporter_background_task_age_seconds",
+				"Age of a background collector's last successful run. Tells \"nothing changes\" "
+						+ "apart from \"nothing is measuring\".",
 				"collector");
-		debout = registre.gauge("exporter_up", "1 quand l'exportateur a fini de démarrer.");
-		inventaire = registre.gauge("exporter_collector_info",
-				"Toujours 1, un par collecteur en service. « source » dit d'où viennent ses "
-						+ "chiffres : « core » pour ce que le serveur expose lui-même, le nom du "
-						+ "plugin sinon. C'est la réponse interrogeable à « d'où vient cette "
-						+ "métrique ».",
+		up = registry.gauge("exporter_up", "1 once the exporter has finished starting.");
+		collectorInfo = registry.gauge("exporter_collector_info",
+				"Always 1, one per active collector. source is where its numbers come from: "
+						+ "\"core\" for what the server exposes itself, otherwise the plugin name.",
 				"collector", "source", "mode");
 	}
 }

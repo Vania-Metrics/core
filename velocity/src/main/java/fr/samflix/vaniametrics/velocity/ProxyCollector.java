@@ -16,98 +16,97 @@ import fr.samflix.vaniametrics.api.Histogram;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * Le proxy : qui est connecté, où, et quels serveurs répondent.
+ * The proxy: who is connected, where, and which backends respond.
  *
- * <p>{@code mc_proxy_backend_up} EST LA MÉTRIQUE LA PLUS RENTABLE DU LOT. Elle dit qu'un serveur
- * ne répond plus AVANT qu'un joueur ne s'en plaigne, et c'est la seule vue du réseau qui existe :
- * un serveur tombé ne publie plus rien, donc son propre exportateur ne peut pas le signaler.
+ * <p>{@code mc_proxy_backend_up} is the most valuable metric here. It shows a backend is down
+ * before a player complains, and it is the only view from outside: a server that is down publishes
+ * nothing, so its own exporter cannot report it.
  *
- * <p>EN FOND, À CAUSE DU PING. {@code RegisteredServer.ping()} ouvre une connexion et attend une
- * réponse : c'est une opération réseau, avec tout ce que ça implique de latence et de délais. La
- * faire au scrape rendrait la durée du scrape dépendante de la santé des serveurs — exactement ce
- * qu'on cherche à mesurer, ce qui fausserait la mesure.
+ * <p>Runs in the background because of the ping. {@code RegisteredServer.ping()} opens a connection
+ * and waits for an answer; doing that on scrape would make scrape duration depend on backend
+ * health, the very thing being measured.
  */
 final class ProxyCollector implements Collector {
 
 	private final ProxyServer proxy;
-	private final long delaiPing;
+	private final long pingTimeout;
 
-	private Gauge enLigne;
-	private Gauge parServeur;
-	private Gauge debout;
-	private Gauge dureePing;
-	private Gauge annonces;
+	private Gauge online;
+	private Gauge perBackend;
+	private Gauge backendUp;
+	private Gauge pingDuration;
+	private Gauge advertisedMax;
 	private Histogram ping;
-	private Gauge parMarque;
+	private Gauge byBrand;
 
 	ProxyCollector(ProxyServer proxy, Config config) {
 		this.proxy = proxy;
-		this.delaiPing = config.duree("collector.proxy.ping_timeout", 5);
+		this.pingTimeout = config.getSeconds("collector.proxy.ping_timeout", 5);
 	}
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "proxy";
 	}
 
 	@Override
-	public boolean enFond() {
+	public boolean isBackground() {
 		return true;
 	}
 
 	@Override
-	public long intervalleSecondes() {
+	public long intervalSeconds() {
 		return 15;
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
-		enLigne = r.gauge("proxy_players_online", "Joueurs connectés au proxy.");
-		parServeur = r.gauge("proxy_backend_players", "Joueurs par serveur d'arrière-plan.", "server");
-		debout = r.gauge("proxy_backend_up",
-				"1 si le serveur répond au ping, 0 sinon. La seule vue du réseau : un serveur "
-						+ "tombé ne publie plus ses propres métriques.",
+	public void declare(MetricRegistry r) {
+		online = r.gauge("proxy_players_online", "Players connected to the proxy.");
+		perBackend = r.gauge("proxy_backend_players", "Players per backend server.", "server");
+		backendUp = r.gauge("proxy_backend_up",
+				"1 if the backend answers the ping, 0 otherwise. The only outside view: a server "
+						+ "that is down no longer publishes its own metrics.",
 				"server");
-		dureePing = r.gauge("proxy_backend_ping_seconds",
-				"Temps de réponse au ping, vu du proxy.", "server");
-		annonces = r.gauge("proxy_backend_max_players",
-				"Places annoncées par le serveur dans sa réponse au ping.", "server");
+		pingDuration = r.gauge("proxy_backend_ping_seconds",
+				"Backend ping response time, as seen from the proxy.", "server");
+		advertisedMax = r.gauge("proxy_backend_max_players",
+				"Player slots advertised by the backend in its ping response.", "server");
 		ping = r.histogram("proxy_player_ping_seconds",
-				"Distribution du ping des joueurs, entre eux et le proxy.", Histogram.SECONDES_PING);
-		parMarque = r.gauge("proxy_players_by_brand",
-				"Joueurs par marque de client annoncée.", "brand");
+				"Ping distribution between players and the proxy.", Histogram.PING_SECONDS);
+		byBrand = r.gauge("proxy_players_by_brand",
+				"Players by advertised client brand.", "brand");
 	}
 
 	@Override
-	public void relever(MetricRegistry r) {
-		enLigne.set(proxy.getPlayerCount());
+	public void collect(MetricRegistry r) {
+		online.set(proxy.getPlayerCount());
 
-		parMarque.clear();
-		Map<String, Integer> marques = new HashMap<>();
-		for (Player j : proxy.getAllPlayers()) {
-			ping.observe(j.getPing() / 1000.0);
-			String m = j.getClientBrand();
-			marques.merge(m == null || m.isBlank() ? "unknown" : m.toLowerCase(Locale.ROOT), 1,
+		byBrand.clear();
+		Map<String, Integer> brands = new HashMap<>();
+		for (Player p : proxy.getAllPlayers()) {
+			ping.observe(p.getPing() / 1000.0);
+			String b = p.getClientBrand();
+			brands.merge(b == null || b.isBlank() ? "unknown" : b.toLowerCase(Locale.ROOT), 1,
 					Integer::sum);
 		}
-		marques.forEach((m, n) -> parMarque.set(n, m));
+		brands.forEach((b, n) -> byBrand.set(n, b));
 
-		for (RegisteredServer serveur : proxy.getAllServers()) {
-			String nom = serveur.getServerInfo().getName();
-			parServeur.set(serveur.getPlayersConnected().size(), nom);
+		for (RegisteredServer server : proxy.getAllServers()) {
+			String name = server.getServerInfo().getName();
+			perBackend.set(server.getPlayersConnected().size(), name);
 
-			long debut = System.nanoTime();
+			long start = System.nanoTime();
 			try {
-				var reponse = serveur.ping().get(delaiPing, TimeUnit.SECONDS);
-				debout.set(1, nom);
-				dureePing.set((System.nanoTime() - debut) / 1e9, nom);
-				reponse.getPlayers().ifPresent(p -> annonces.set(p.getMax(), nom));
+				var response = server.ping().get(pingTimeout, TimeUnit.SECONDS);
+				backendUp.set(1, name);
+				pingDuration.set((System.nanoTime() - start) / 1e9, name);
+				response.getPlayers().ifPresent(p -> advertisedMax.set(p.getMax(), name));
 			} catch (Exception e) {
-				// Toute exception vaut « il ne répond pas » : délai dépassé, connexion refusée,
-				// réponse illisible. Distinguer les cas ferait une étiquette de plus pour une
-				// information que les journaux portent déjà.
-				debout.set(0, nom);
-				dureePing.set(Double.NaN, nom);
+				// Any exception means "not answering": timeout, connection refused, unreadable
+				// response. Telling them apart would add a label for information the logs already
+				// have.
+				backendUp.set(0, name);
+				pingDuration.set(Double.NaN, name);
 			}
 		}
 	}

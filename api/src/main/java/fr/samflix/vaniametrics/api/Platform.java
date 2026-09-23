@@ -1,67 +1,68 @@
 package fr.samflix.vaniametrics.api;
 
 import java.nio.file.Path;
+import java.util.Optional;
 
 /**
- * Ce que le noyau attend de sa plateforme d'accueil.
+ * What the core needs from its host platform.
  *
- * <p>C'EST TOUTE LA FRONTIÈRE entre le noyau et les adaptateurs. Le noyau ne connaît ni Bukkit ni
- * Velocity ; il connaît cette interface, et les deux adaptateurs la remplissent chacun à sa
- * manière. Elle est petite exprès : chaque méthode ajoutée ici est une chose de plus à implémenter
- * deux fois, et une chance de plus que les deux plateformes divergent.
+ * <p>This is the whole boundary between the core and the platform adapters. The core knows
+ * neither Bukkit nor Velocity, only this interface, which each adapter implements. It is small on
+ * purpose: every method added here is one more thing to implement twice and one more chance for
+ * the platforms to diverge.
  *
- * <p>ELLE EST DANS L'API et non dans le noyau parce qu'un module en a besoin : pour journaliser
- * dans le bon fichier, pour programmer une tâche, et pour chercher un service sans savoir si la
- * plateforme a un ServicesManager. Un module ne l'implémente jamais — il la reçoit.
+ * <p>It lives in the API because collectors need it too: to log to the right place, to schedule a
+ * task, and to look up a service without knowing whether the platform has a ServicesManager.
+ * Collectors never implement it; they receive it.
  */
 public interface Platform {
 
-	/** « paper » ou « velocity ». Sert d'étiquette dans {@code mc_build_info}. */
+	/** "paper" or "velocity". Used as a label in {@code mc_build_info}. */
 	String type();
 
-	/** Le nom de cette instance dans le réseau : « lobby », « proxy ». Étiquette {@code server}. */
-	String nomServeur();
+	/** This instance's name on the network: "lobby", "proxy". The {@code server} label. */
+	String serverName();
 
-	/** La version du logiciel serveur, pour {@code mc_build_info}. */
-	String versionServeur();
+	/** The server software version, for {@code mc_build_info}. */
+	String serverVersion();
 
-	/** Le répertoire de configuration du plugin. */
-	Path repertoire();
+	/** The plugin's configuration directory. */
+	Path dataDirectory();
 
 	void info(String message);
 
-	void avertir(String message);
+	void warn(String message);
 
-	void erreur(String message, Throwable cause);
+	void error(String message, Throwable cause);
 
-	/** Un plugin est-il présent ? Sert à n'activer un collecteur que s'il a de quoi travailler. */
-	boolean pluginPresent(String nom);
+	/** Whether a plugin is installed. Lets a collector enable itself only when it has something to read. */
+	boolean isPluginPresent(String name);
 
 	/**
-	 * Cherche un service fourni par un autre plugin.
+	 * Looks up a service provided by another plugin.
 	 *
-	 * <p>C'EST LA VOIE OFFICIELLE SUR PAPER, et elle n'a pas d'équivalent sur Velocity. Bukkit a
-	 * un {@code ServicesManager} où LuckPerms, Vault, spark et EssentialsX déposent leur point
-	 * d'entrée ; Velocity n'en a pas, et chaque plugin y expose un fournisseur statique.
+	 * <p>On Paper this is Bukkit's {@code ServicesManager}, where LuckPerms, Vault, spark and
+	 * EssentialsX register their entry points. Velocity has no equivalent; plugins there expose a
+	 * static provider instead.
 	 *
-	 * <p>Ce détour a été ajouté après une vraie surprise : {@code SparkProvider.get()} ne rend
-	 * rien sur Paper, parce que spark y est intégré au serveur et s'annonce par le
-	 * {@code ServicesManager}. Un module qui veut marcher des deux côtés doit donc essayer les
-	 * deux voies, et c'est la plateforme qui sait laquelle existe chez elle.
+	 * <p>Added after a real surprise: {@code SparkProvider.get()} returns nothing on Paper, because
+	 * spark is built into the server there and registers through the {@code ServicesManager}. A
+	 * collector that works on both platforms has to try both routes, and only the platform knows
+	 * which one it has.
 	 */
-	default <T> java.util.Optional<T> service(Class<T> type) {
-		return java.util.Optional.empty();
+	default <T> Optional<T> service(Class<T> type) {
+		return Optional.empty();
 	}
 
 	/**
-	 * Exécute sur le fil principal du serveur et ATTEND le résultat.
+	 * Runs on the server's main thread and waits for completion.
 	 *
-	 * <p>Sur Velocity il n'y a pas de fil principal : l'implémentation exécute sur place. Sur
-	 * Paper, elle passe par l'ordonnanceur et bloque le fil appelant — qui est celui d'une tâche de
-	 * fond, jamais celui du serveur.
+	 * <p>Velocity has no main thread, so the implementation runs the task in place. Paper goes
+	 * through the scheduler and blocks the calling thread, which is a background task thread,
+	 * never the server's.
 	 */
-	void surFilPrincipal(Runnable tache) throws Exception;
+	void runOnMainThread(Runnable task) throws Exception;
 
-	/** Programme une tâche répétée, hors du fil principal. */
-	void repeter(Runnable tache, long intervalleSecondes);
+	/** Schedules a repeating task off the main thread. */
+	void scheduleRepeating(Runnable task, long intervalSeconds);
 }

@@ -1,7 +1,10 @@
 package fr.samflix.vaniametrics.paper;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -11,6 +14,7 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -20,119 +24,114 @@ import fr.samflix.vaniametrics.api.Histogram;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * Ce qui se passe, compté au vol.
+ * Game events, counted as they happen.
  *
- * <p>DES COMPTEURS ET NON DES JAUGES. Une mort est un événement, pas un état : ce qui intéresse
- * est « combien par heure », que Grafana obtient par {@code rate()} sur un compteur. Une jauge
- * « nombre de morts » n'aurait aucun sens.
+ * <p>Counters, not gauges. A death is an event, not a state: the useful question is "how many per
+ * hour", which Grafana answers with {@code rate()} on a counter.
  *
- * <p>{@code EventPriority.MONITOR} et {@code ignoreCancelled}, systématiquement : on OBSERVE, on
- * ne décide de rien. MONITOR est le dernier maillon, donc on voit l'événement tel que les autres
- * plugins l'ont laissé, et un événement annulé par une protection ne doit pas être compté — sinon
- * on mesurerait les tentatives et non les faits.
+ * <p>{@code EventPriority.MONITOR} and {@code ignoreCancelled} throughout: this only observes.
+ * MONITOR runs last, so the event is seen as other plugins left it, and an event cancelled by a
+ * protection plugin is not counted; otherwise we would measure attempts, not outcomes.
  *
- * <p>LE PIÈGE DE CARDINALITÉ EST ICI. {@code mc_commands_total{command="…"}} avec la commande
- * telle que tapée, c'est une série par faute de frappe : un joueur qui tape {@code /qsdfgh} crée
- * une série temporelle éternelle. La liste des commandes étiquetées est donc FIXÉE en
- * configuration, et tout le reste tombe dans {@code other}.
+ * <p>Cardinality trap: {@code mc_server_commands_total{command="..."}} with the command as typed
+ * would create one series per typo; a player typing {@code /qsdfgh} creates a series that lives
+ * forever. The labelled commands are therefore a fixed list, and everything else is {@code other}.
  */
 final class GameEventListener implements Listener {
 
-	private final Counter connexions;
-	private final Counter morts;
-	private final Counter mortsMobs;
-	private final Counter blocs;
-	private final Counter commandes;
+	private static final Set<String> TRACKED_COMMANDS =
+			Set.of("spawn", "tp", "home", "warp", "balance", "pay", "help", "msg");
+
+	private final Counter connections;
+	private final Counter deaths;
+	private final Counter mobDeaths;
+	private final Counter blocks;
+	private final Counter commands;
 	private final Counter messages;
-	private final Counter fabrications;
+	private final Counter crafts;
 	private final Histogram session;
 
-	private final Set<String> commandesSuivies;
-	private final java.util.Map<java.util.UUID, Long> debutSession =
-			new java.util.concurrent.ConcurrentHashMap<>();
+	private final Map<UUID, Long> sessionStart = new ConcurrentHashMap<>();
 
 	GameEventListener(MetricRegistry r) {
-		connexions = r.counter("server_connections_total",
-				"Connexions et déconnexions. result = join|quit.", "result");
-		morts = r.counter("server_deaths_total", "Morts de joueurs, par cause.", "cause");
-		mortsMobs = r.counter("server_mob_deaths_total",
-				"Mobs tués. Seuls ceux tués PAR UN JOUEUR sont comptés — un squelette qui brûle "
-						+ "au soleil n'apprend rien sur l'activité du serveur.",
+		connections = r.counter("server_connections_total",
+				"Joins and quits. result = join|quit.", "result");
+		deaths = r.counter("server_deaths_total", "Player deaths, by cause.", "cause");
+		mobDeaths = r.counter("server_mob_deaths_total",
+				"Mobs killed. Only kills BY A PLAYER count: a skeleton burning in the sun says "
+						+ "nothing about server activity.",
 				"entity_type");
-		blocs = r.counter("server_blocks_total", "Blocs cassés et posés. action = break|place.", "action");
-		commandes = r.counter("server_commands_total",
-				"Commandes exécutées. L'étiquette est bornée par la configuration : voir la note "
-						+ "sur la cardinalité.",
+		blocks = r.counter("server_blocks_total", "Blocks broken and placed. action = break|place.", "action");
+		commands = r.counter("server_commands_total",
+				"Commands run. The label is limited to a fixed list of commands, everything else "
+						+ "is \"other\", to bound cardinality.",
 				"command");
-		messages = r.counter("server_chat_messages_total", "Messages de chat.");
-		fabrications = r.counter("server_items_crafted_total", "Objets fabriqués.");
+		messages = r.counter("server_chat_messages_total", "Chat messages.");
+		crafts = r.counter("server_items_crafted_total", "Items crafted.");
 		session = r.histogram("server_session_seconds",
-				"Durée des sessions, mesurée à la déconnexion.", Histogram.SECONDES_SESSION);
-		commandesSuivies = Set.of("spawn", "tp", "home", "warp", "balance", "pay", "help", "msg");
+				"Session length, measured on quit.", Histogram.SESSION_SECONDS);
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onJoin(PlayerJoinEvent e) {
-		connexions.inc("join");
-		debutSession.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+		connections.inc("join");
+		sessionStart.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR)
 	public void onQuit(PlayerQuitEvent e) {
-		connexions.inc("quit");
-		Long debut = debutSession.remove(e.getPlayer().getUniqueId());
-		if (debut != null) {
-			session.observe((System.currentTimeMillis() - debut) / 1000.0);
+		connections.inc("quit");
+		Long start = sessionStart.remove(e.getPlayer().getUniqueId());
+		if (start != null) {
+			session.observe((System.currentTimeMillis() - start) / 1000.0);
 		}
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR)
 	public void onDeath(PlayerDeathEvent e) {
 		var cause = e.getEntity().getLastDamageCause();
-		morts.inc(cause == null ? "unknown" : cause.getCause().name().toLowerCase(Locale.ROOT));
+		deaths.inc(cause == null ? "unknown" : cause.getCause().name().toLowerCase(Locale.ROOT));
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR)
 	public void onEntityDeath(EntityDeathEvent e) {
 		if (e.getEntity().getKiller() != null) {
-			mortsMobs.inc(e.getEntityType().name().toLowerCase(Locale.ROOT));
+			mobDeaths.inc(e.getEntityType().name().toLowerCase(Locale.ROOT));
 		}
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onBreak(BlockBreakEvent e) {
-		blocs.inc("break");
+		blocks.inc("break");
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onPlace(BlockPlaceEvent e) {
-		blocs.inc("place");
+		blocks.inc("place");
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onCraft(CraftItemEvent e) {
-		fabrications.inc();
+		crafts.inc();
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onCommand(PlayerCommandPreprocessEvent e) {
-		String brut = e.getMessage();
-		int espace = brut.indexOf(' ');
-		String nom = (espace < 0 ? brut.substring(1) : brut.substring(1, espace))
+		String raw = e.getMessage();
+		int space = raw.indexOf(' ');
+		String name = (space < 0 ? raw.substring(1) : raw.substring(1, space))
 				.toLowerCase(Locale.ROOT);
-		commandes.inc(commandesSuivies.contains(nom) ? nom : "other");
+		commands.inc(TRACKED_COMMANDS.contains(name) ? name : "other");
 	}
 
 	/**
-	 * Le chat.
-	 *
-	 * <p>Sur {@code AsyncPlayerChatEvent} et non sur l'événement Adventure de Paper : le premier
-	 * existe sur toutes les branches, le second seulement sur les récentes. Un compteur de
-	 * messages ne vaut pas de se lier à une API qui bouge.
+	 * Uses {@code AsyncPlayerChatEvent} rather than Paper's Adventure chat event: the former
+	 * exists on every branch, the latter only on recent ones. A message counter is not worth
+	 * tying to an API that keeps moving.
 	 */
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	@SuppressWarnings("deprecation")
-	public void onChat(org.bukkit.event.player.AsyncPlayerChatEvent e) {
+	public void onChat(AsyncPlayerChatEvent e) {
 		messages.inc();
 	}
 }

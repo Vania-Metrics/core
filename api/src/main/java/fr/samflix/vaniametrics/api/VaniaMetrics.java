@@ -1,62 +1,61 @@
 package fr.samflix.vaniametrics.api;
 
 /**
- * LE CONTRAT ENTRE LE NOYAU ET LES MODULES.
+ * The contract between the core plugin and collector plugins.
  *
- * <p>Le noyau est un plugin ; chaque intégration en est un autre, dans son propre jar. Ils ne se
- * connaissent que par cette interface, qui vit dans l'artefact {@code vania-metrics-api} — le seul
- * que quelqu'un d'extérieur ait besoin de compiler.
- *
- * <p>UN MODULE FAIT TROIS CHOSES, et rien d'autre :
+ * <p>The core is one plugin; each integration is another, in its own jar. They only know each
+ * other through this interface, which lives in the {@code vania-metrics-api} artifact, the only
+ * one a third party needs to compile against.
  *
  * <pre>{@code
- * // à l'activation
- * VaniaMetrics metriques = VaniaMetricsProvider.get();
- * collecteur = new MonCollecteur(metriques.plateforme());
- * metriques.enregistrer(collecteur);
+ * // on enable
+ * VaniaMetrics metrics = VaniaMetricsProvider.get();
+ * collector = new MyCollector(metrics.platform());
+ * metrics.register(collector);
  *
- * // à la désactivation
- * metriques.retirer(collecteur);
+ * // on disable
+ * metrics.unregister(collector);
  * }</pre>
  *
- * <p>IL N'Y A PAS D'ORDRE À RESPECTER À L'ENREGISTREMENT. Un collecteur ajouté après le démarrage
- * du serveur HTTP est déclaré et programmé sur-le-champ ; il apparaît au scrape suivant. C'est ce
- * qui permet à un module d'être rechargé à chaud sans toucher au noyau.
+ * <p>Registration order does not matter. A collector registered after the HTTP server started is
+ * declared and scheduled immediately and shows up on the next scrape, so a collector plugin can be
+ * reloaded without touching the core.
  */
 public interface VaniaMetrics {
 
-	/** Le registre où déclarer ses instruments. */
-	MetricRegistry registre();
+	/** The registry to declare instruments in. */
+	MetricRegistry registry();
 
-	/** La plateforme d'accueil : journaux, ordonnanceur, recherche de services. */
-	Platform plateforme();
+	/** The host platform: logging, scheduler, service lookup. */
+	Platform platform();
 
 	/**
-	 * La configuration du noyau.
+	 * The core configuration.
 	 *
-	 * <p>Un module y lit ses propres clés — par convention {@code module.<nom>.<clé>} — plutôt que
-	 * d'ouvrir un fichier à lui. Un seul fichier à connaître pour l'opérateur, et l'environnement
-	 * le surcharge de la même façon.
+	 * <p>A collector reads its own keys here, by convention {@code module.<name>.<key>}, instead of
+	 * opening a file of its own. One file for the operator, overridden by the environment the same
+	 * way.
 	 */
 	Config config();
 
-	/** La version du noyau, pour un module qui voudrait s'en assurer. */
+	/** The core version. */
 	String version();
 
 	/**
-	 * Met un collecteur en service.
+	 * Puts a collector into service.
 	 *
-	 * <p>Le collecteur est déclaré puis, selon ce qu'il annonce, appelé à chaque scrape ou
-	 * programmé en tâche de fond. Le rappeler avec le même collecteur ne fait rien.
+	 * <p>The collector is declared, then called on every scrape or scheduled in the background,
+	 * depending on {@link Collector#isBackground()}. Registering the same collector twice does
+	 * nothing.
 	 */
-	void enregistrer(Collector collecteur);
+	void register(Collector collector);
 
 	/**
-	 * Retire un collecteur.
+	 * Removes a collector.
 	 *
-	 * <p>À APPELER À LA DÉSACTIVATION DU MODULE, sans quoi le noyau continuerait d'interroger un
-	 * collecteur dont les classes viennent d'un plugin déchargé — et le scrape tomberait en
-	 * {@code NoClassDefFoundError} à chaque passage. Les séries déjà publiées disparaissent.
+	 * <p>Call it when the collector plugin is disabled. Otherwise the core keeps calling a
+	 * collector whose classes come from an unloaded plugin, and every scrape fails with
+	 * {@code NoClassDefFoundError}. Series already published disappear.
 	 */
-	void retirer(Collector collecteur);
+	void unregister(Collector collector);
 }

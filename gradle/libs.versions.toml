@@ -1,21 +1,21 @@
-# Dépendances de COMPILATION seulement — aucune ne part dans les jars produits,
-# à part l'API et le noyau commun, qui sont les nôtres.
+# Compile-time dependencies only: none of them end up in the produced jars,
+# which contain only our own API and common core.
 #
-# Les empreintes SHA-256 de tout ce qui est résolu sont épinglées dans
-# gradle/verification-metadata.xml. Après une montée de version :
+# SHA-256 checksums of everything resolved are pinned in
+# gradle/verification-metadata.xml. After a version bump:
 #   ./gradlew --write-verification-metadata sha256 build
 #
-# paper-api EST UN INSTANTANÉ DATÉ. Paper ne publie pas de version figée de son
-# API : l'horodatage est la version. Pour le relever à nouveau, lire
-# maven-metadata.xml du répertoire 1.21.11-R0.1-SNAPSHOT. L'empreinte a été
-# vérifiée identique à celle du jar que le serveur charge réellement.
+# paper-api is a timestamped snapshot. Paper does not publish release versions
+# of its API: the timestamp is the version. To pick a newer one, read
+# maven-metadata.xml in the 1.21.11-R0.1-SNAPSHOT directory. The checksum was
+# checked against the jar the server actually loads.
 #
-# paper-api EST LU COMME UNE VERSION FIGÉE (voir settings.gradle.kts), donc SANS
-# ses dépendances transitives : le bundle « paper » les déclare, ce sont celles
-# dont la compilation a besoin. Leurs versions suivent le .pom de paper-api.
+# paper-api is resolved as a fixed version (see settings.gradle.kts), so without
+# its transitive dependencies: the "paper" bundle declares the ones compilation
+# needs. Their versions follow paper-api's .pom.
 #
-# velocity-api EST AUSSI UN PROCESSEUR D'ANNOTATIONS : c'est lui qui écrit
-# velocity-plugin.json à partir de @Plugin. Une deuxième source de vérité en moins.
+# velocity-api is also an annotation processor: it generates
+# velocity-plugin.json from @Plugin, so there is no second source of truth.
 [versions]
 paper-api = "1.21.11-R0.1-20260511.115010-91"
 velocity-api = "3.5.1"

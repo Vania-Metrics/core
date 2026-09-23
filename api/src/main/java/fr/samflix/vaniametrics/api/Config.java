@@ -9,102 +9,101 @@ import java.util.Locale;
 import java.util.Properties;
 
 /**
- * La configuration : un fichier {@code metrics.properties}, que l'environnement peut surcharger.
+ * The configuration: a {@code metrics.properties} file that the environment can override.
  *
- * <p>POURQUOI DES PROPERTIES ET PAS DU YAML, alors que tout le dépôt est en YAML. Parce que ce
- * plugin tourne sur DEUX plateformes qui n'ont pas le même format de configuration — Bukkit lit du
- * YAML par SnakeYAML, Velocity du TOML par Configurate — et que le noyau ne doit connaître ni
- * l'une ni l'autre. {@code java.util.Properties} est dans le JDK, se lit pareil des deux côtés, et
- * n'ajoute aucune dépendance à reloger dans le jar.
+ * <p>Properties rather than YAML because the plugin runs on two platforms with different config
+ * formats (Bukkit reads YAML through SnakeYAML, Velocity reads TOML through Configurate) and the
+ * core must know neither. {@code java.util.Properties} is in the JDK, reads the same on both sides
+ * and adds no dependency to relocate.
  *
- * <p>L'ENVIRONNEMENT L'EMPORTE SUR LE FICHIER, comme pour Plan et LuckPerms dans ce dépôt : la clé
- * {@code http.port} se surcharge par {@code VANIA_METRICS_HTTP_PORT}. C'est ce qui permet au chart
- * de tout décider depuis values.yaml sans livrer de fichier.
+ * <p>The environment wins over the file, as with Plan and LuckPerms: {@code http.port} is
+ * overridden by {@code VANIA_METRICS_HTTP_PORT}. This lets a Helm chart or a compose file drive
+ * everything without shipping a file.
  */
 public final class Config {
 
-	private static final String PREFIXE_ENV = "VANIA_METRICS_";
+	private static final String ENV_PREFIX = "VANIA_METRICS_";
 
 	private final Properties props = new Properties();
 
 	private Config() {}
 
 	/**
-	 * Charge la configuration, en écrivant le fichier par défaut s'il manque.
+	 * Loads the configuration, writing the default file first if it is missing.
 	 *
-	 * <p>Le fichier écrit porte ses commentaires : un opérateur qui l'ouvre doit comprendre ce
-	 * qu'il règle sans aller lire le code.
+	 * <p>The default file is commented, so an operator can tell what each key does without
+	 * reading the code.
 	 */
-	public static Config charger(Platform plateforme) {
+	public static Config load(Platform platform) {
 		Config c = new Config();
-		Path fichier = plateforme.repertoire().resolve("metrics.properties");
+		Path file = platform.dataDirectory().resolve("metrics.properties");
 		try {
-			if (!Files.exists(fichier)) {
-				Files.createDirectories(plateforme.repertoire());
+			if (!Files.exists(file)) {
+				Files.createDirectories(platform.dataDirectory());
 				try (InputStream in = Config.class.getResourceAsStream("/metrics.properties")) {
 					if (in != null) {
-						try (OutputStream out = Files.newOutputStream(fichier)) {
+						try (OutputStream out = Files.newOutputStream(file)) {
 							in.transferTo(out);
 						}
 					}
 				}
-				plateforme.info("configuration écrite : " + fichier);
+				platform.info("wrote default configuration: " + file);
 			}
-			if (Files.exists(fichier)) {
-				try (InputStream in = Files.newInputStream(fichier)) {
+			if (Files.exists(file)) {
+				try (InputStream in = Files.newInputStream(file)) {
 					c.props.load(in);
 				}
 			}
 		} catch (IOException e) {
-			plateforme.erreur("configuration illisible, valeurs par défaut utilisées", e);
+			platform.error("could not read the configuration, using defaults", e);
 		}
 		return c;
 	}
 
-	/** Pour les tests, et pour une plateforme qui n'aurait pas de disque. */
-	public static Config vide() {
+	/** For tests, and for a platform without a data directory. */
+	public static Config empty() {
 		return new Config();
 	}
 
-	private String brut(String cle) {
-		String env = System.getenv(PREFIXE_ENV + cle.replace('.', '_').toUpperCase(Locale.ROOT));
-		return env != null && !env.isEmpty() ? env : props.getProperty(cle);
+	private String raw(String key) {
+		String env = System.getenv(ENV_PREFIX + key.replace('.', '_').toUpperCase(Locale.ROOT));
+		return env != null && !env.isEmpty() ? env : props.getProperty(key);
 	}
 
-	public String texte(String cle, String defaut) {
-		String v = brut(cle);
-		return v == null ? defaut : v.trim();
+	public String getString(String key, String defaultValue) {
+		String v = raw(key);
+		return v == null ? defaultValue : v.trim();
 	}
 
-	public int entier(String cle, int defaut) {
-		String v = brut(cle);
+	public int getInt(String key, int defaultValue) {
+		String v = raw(key);
 		if (v == null) {
-			return defaut;
+			return defaultValue;
 		}
 		try {
 			return Integer.parseInt(v.trim());
 		} catch (NumberFormatException e) {
-			return defaut;
+			return defaultValue;
 		}
 	}
 
-	public long duree(String cle, long defautSecondes) {
-		return entier(cle, (int) defautSecondes);
+	public long getSeconds(String key, long defaultSeconds) {
+		return getInt(key, (int) defaultSeconds);
 	}
 
-	public boolean actif(String cle, boolean defaut) {
-		String v = brut(cle);
-		return v == null ? defaut : Boolean.parseBoolean(v.trim());
+	public boolean getBoolean(String key, boolean defaultValue) {
+		String v = raw(key);
+		return v == null ? defaultValue : Boolean.parseBoolean(v.trim());
 	}
 
 	/**
-	 * Ce collecteur est-il activé ?
+	 * Whether a collector is enabled ({@code collector.<name>}).
 	 *
-	 * <p>Tous le sont par défaut SAUF ceux qu'on sait coûteux — {@code packets} et {@code sql} —,
-	 * qui doivent être demandés. Un exportateur qui ralentit le serveur dès l'installation ne
-	 * serait jamais réinstallé.
+	 * <p>Everything is on by default except collectors known to be expensive, such as
+	 * {@code packets} and {@code sql}, which must be asked for. An exporter that slows the server
+	 * down out of the box does not get installed twice.
 	 */
-	public boolean collecteurActif(String nom, boolean defaut) {
-		return actif("collector." + nom, defaut);
+	public boolean isCollectorEnabled(String name, boolean defaultValue) {
+		return getBoolean("collector." + name, defaultValue);
 	}
 }

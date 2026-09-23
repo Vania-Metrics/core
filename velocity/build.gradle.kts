@@ -5,11 +5,11 @@ plugins {
 dependencies {
     implementation(project(":vania-metrics-common"))
     compileOnly(libs.velocity.api)
-    // @Plugin GÉNÈRE velocity-plugin.json : le processeur est dans velocity-api.
+    // Generates velocity-plugin.json from @Plugin.
     annotationProcessor(libs.velocity.api)
 }
 
-// Un plugin est un jar autonome : l'API et le noyau commun y sont DÉPLIÉS.
+// A plugin is a self-contained jar: the API and the common core are unpacked into it.
 tasks.jar {
     archiveFileName = "VaniaMetrics-$version-velocity.jar"
     dependsOn(configurations.runtimeClasspath)

@@ -1,12 +1,11 @@
 package fr.samflix.vaniametrics.api;
 
 /**
- * Une valeur qui monte et descend : joueurs connectés, mémoire occupée, TPS.
+ * A value that goes up and down: online players, used memory, TPS.
  *
- * <p>C'est l'instrument par défaut, et celui qu'on choisit quand on hésite. La question qui tranche
- * est : « est-ce que la valeur peut descendre ? » Si oui, jauge. Si elle ne fait qu'augmenter
- * jusqu'au redémarrage, c'est un {@link Counter}, et le distinguer n'est pas cosmétique : Grafana
- * applique {@code rate()} aux compteurs et jamais aux jauges.
+ * <p>The default instrument. The deciding question is "can the value go down?" If it only grows
+ * until a restart, it is a {@link Counter}, and the difference matters: Grafana applies
+ * {@code rate()} to counters, never to gauges.
  */
 public final class Gauge extends Metric {
 
@@ -19,14 +18,14 @@ public final class Gauge extends Metric {
 		return "gauge";
 	}
 
-	/** Pose la valeur de la série désignée par ces étiquettes. */
-	public void set(double valeur, String... etiquettes) {
-		serie(1, etiquettes)[0] = valeur;
+	/** Sets the value of the series identified by these label values. */
+	public void set(double value, String... labels) {
+		seriesFor(1, labels)[0] = value;
 	}
 
-	/** Ajoute à la série désignée. Utile pour agréger monde par monde. */
-	public void add(double delta, String... etiquettes) {
-		double[] s = serie(1, etiquettes);
+	/** Adds to the series. Useful to aggregate world by world. */
+	public void add(double delta, String... labels) {
+		double[] s = seriesFor(1, labels);
 		synchronized (s) {
 			s[0] += delta;
 		}

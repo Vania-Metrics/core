@@ -1,28 +1,22 @@
-// =============================================================================
-// VaniaMetrics — l'API, et le noyau pour Paper et pour Velocity
-// =============================================================================
-// CE QUI SORT (./gradlew build) :
+// VaniaMetrics: the public API, and the core plugin for Paper and Velocity.
 //
-//   api/build/libs/vania-metrics-api-<v>.jar         l'interface publique, la
-//                                                    seule chose qu'un auteur de
-//                                                    collecteur compile
-//   paper/build/libs/VaniaMetrics-<v>-paper.jar      le noyau, plugin Bukkit
-//   velocity/build/libs/VaniaMetrics-<v>-velocity.jar le noyau, plugin Velocity
+// Outputs (./gradlew build):
+//   api/build/libs/vania-metrics-api-<v>.jar           the public API, the only thing a
+//                                                      collector author compiles against
+//   paper/build/libs/VaniaMetrics-<v>-paper.jar        the core, as a Bukkit plugin
+//   velocity/build/libs/VaniaMetrics-<v>-velocity.jar  the core, as a Velocity plugin
 //
-// ./gradlew publishToMavenLocal publie l'API dans ~/.m2, avec son .pom.
+// No runtime dependencies. The registry, the exposition format and the HTTP server are written
+// here on the JDK alone: nothing to relocate, nothing to shade. Plugin jars contain the API and
+// the common core, nothing else.
 //
-// AUCUNE DÉPENDANCE À L'EXÉCUTION. Le registre, le format d'exposition et le
-// serveur HTTP sont écrits ici, sur le JDK seul : rien à reloger, rien à ombrer.
-// Les jars de plugin embarquent l'API et le noyau commun, et rien d'autre.
-//
-// --release 21 ET PAS LA VERSION DU JDK : le lobby vise Java 25, le proxy
-// Java 21. Le plus petit commande.
-// =============================================================================
+// --release 21 rather than the JDK version: Paper servers may run Java 25, Velocity proxies
+// Java 21. The lowest one wins.
 
-// La version est lue dans la SOURCE, jamais recopiée : voir api/…/Version.java.
+// The version is read from the source, never copied: see api/.../Version.java.
 val versionSource = file("api/src/main/java/fr/samflix/vaniametrics/api/Version.java")
-val vaniaVersion = Regex("""VALEUR = "([^"]+)"""").find(versionSource.readText())?.groupValues?.get(1)
-    ?: error("version illisible dans $versionSource")
+val vaniaVersion = Regex("""VALUE = "([^"]+)"""").find(versionSource.readText())?.groupValues?.get(1)
+    ?: error("cannot read the version from $versionSource")
 
 subprojects {
     group = "fr.samflix"

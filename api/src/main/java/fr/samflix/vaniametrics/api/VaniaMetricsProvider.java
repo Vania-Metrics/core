@@ -3,16 +3,16 @@ package fr.samflix.vaniametrics.api;
 import java.util.Optional;
 
 /**
- * Le point d'accès au noyau depuis un module.
+ * Access point to the core from a collector plugin.
  *
- * <p>Sur Paper, le noyau s'annonce AUSSI dans le {@code ServicesManager} de Bukkit, qui est la voie
- * idiomatique ; ce fournisseur statique existe parce que Velocity n'a pas d'équivalent, et qu'un
- * module écrit pour les deux plateformes ne doit pas avoir à le savoir.
+ * <p>On Paper the core is also registered in Bukkit's {@code ServicesManager}, the idiomatic route.
+ * This static provider exists because Velocity has no equivalent, and a collector written for both
+ * platforms should not have to care.
  *
- * <p>APPELER {@link #get()} DEPUIS UN MODULE EST SÛR À CONDITION QUE LE MODULE DÉPENDE DU NOYAU —
- * {@code depend: [VaniaMetrics]} dans son plugin.yml, {@code dependencies} dans son
- * velocity-plugin.json. Bukkit et Velocity garantissent alors que le noyau est activé avant lui.
- * Sans cette déclaration, l'ordre n'est garanti par rien.
+ * <p>Calling {@link #get()} is safe as long as the collector plugin depends on the core:
+ * {@code depend: [VaniaMetrics]} in its plugin.yml, {@code dependencies} in its
+ * velocity-plugin.json. Bukkit and Velocity then enable the core first. Without that declaration
+ * nothing guarantees the order.
  */
 public final class VaniaMetricsProvider {
 
@@ -20,29 +20,28 @@ public final class VaniaMetricsProvider {
 
 	private VaniaMetricsProvider() {}
 
-	/** Le noyau, ou une exception s'il n'est pas encore là. */
+	/** The core, or an exception if it is not loaded yet. */
 	public static VaniaMetrics get() {
 		VaniaMetrics v = instance;
 		if (v == null) {
 			throw new IllegalStateException(
-					"VaniaMetrics n'est pas chargé. Le module dépend-il bien du noyau ?");
+					"VaniaMetrics is not loaded. Does this plugin depend on VaniaMetrics?");
 		}
 		return v;
 	}
 
-	/** Le noyau, ou rien. Pour un code qui veut se taire au lieu d'échouer. */
-	public static Optional<VaniaMetrics> chercher() {
+	/** The core, if loaded. For code that would rather stay quiet than fail. */
+	public static Optional<VaniaMetrics> find() {
 		return Optional.ofNullable(instance);
 	}
 
 	/**
-	 * RÉSERVÉ AU NOYAU. Un module qui appelle ceci casse tous les autres.
+	 * Internal to the core. A collector calling this breaks every other collector.
 	 *
-	 * <p>Publique faute de mieux : le noyau est dans un autre paquet et un autre jar, la visibilité
-	 * de paquet ne peut donc pas l'atteindre. C'est le même compromis que LuckPerms et spark, pour
-	 * la même raison.
+	 * <p>Public only because the core lives in another package and another jar, out of reach of
+	 * package-private access. LuckPerms and spark make the same trade-off for the same reason.
 	 */
-	public static void definir(VaniaMetrics v) {
+	public static void set(VaniaMetrics v) {
 		instance = v;
 	}
 }

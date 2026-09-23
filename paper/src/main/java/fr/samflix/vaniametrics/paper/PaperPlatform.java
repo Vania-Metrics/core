@@ -1,6 +1,7 @@
 package fr.samflix.vaniametrics.paper;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -10,7 +11,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import fr.samflix.vaniametrics.api.Platform;
 
-/** L'adaptateur Paper : tout ce que le noyau demande, traduit en Bukkit. */
 final class PaperPlatform implements Platform {
 
 	private final JavaPlugin plugin;
@@ -25,21 +25,20 @@ final class PaperPlatform implements Platform {
 	}
 
 	@Override
-	public String nomServeur() {
-		// Le nom vient de l'environnement et non de server.properties : c'est le chart qui sait
-		// comment s'appelle cette instance dans le réseau, et c'est le même nom que les
-		// étiquettes Kubernetes portent.
+	public String serverName() {
+		// From the environment rather than server.properties: the deployment knows what this
+		// instance is called on the network, and it is the same name its other labels carry.
 		String env = System.getenv("VANIA_SERVER_NAME");
 		return env != null && !env.isEmpty() ? env : "paper";
 	}
 
 	@Override
-	public String versionServeur() {
+	public String serverVersion() {
 		return Bukkit.getVersion();
 	}
 
 	@Override
-	public Path repertoire() {
+	public Path dataDirectory() {
 		return plugin.getDataFolder().toPath();
 	}
 
@@ -49,51 +48,49 @@ final class PaperPlatform implements Platform {
 	}
 
 	@Override
-	public void avertir(String message) {
+	public void warn(String message) {
 		plugin.getLogger().warning(message);
 	}
 
 	@Override
-	public void erreur(String message, Throwable cause) {
+	public void error(String message, Throwable cause) {
 		plugin.getLogger().log(Level.SEVERE, message, cause);
 	}
 
 	@Override
-	public boolean pluginPresent(String nom) {
-		return Bukkit.getPluginManager().getPlugin(nom) != null;
+	public boolean isPluginPresent(String name) {
+		return Bukkit.getPluginManager().getPlugin(name) != null;
 	}
 
 	@Override
-	public <T> java.util.Optional<T> service(Class<T> type) {
-		return java.util.Optional.ofNullable(Bukkit.getServicesManager().load(type));
+	public <T> Optional<T> service(Class<T> type) {
+		return Optional.ofNullable(Bukkit.getServicesManager().load(type));
 	}
 
 	@Override
-	public void surFilPrincipal(Runnable tache) throws Exception {
+	public void runOnMainThread(Runnable task) throws Exception {
 		if (Bukkit.isPrimaryThread()) {
-			tache.run();
+			task.run();
 			return;
 		}
-		// On ATTEND le résultat, et le fil qui attend est celui d'une tâche de fond — jamais
-		// celui du serveur, jamais celui du HTTP. Le délai borne l'attente : un serveur figé ne
-		// doit pas bloquer l'exportateur pour toujours, sinon la métrique qui dirait qu'il est
-		// figé n'arriverait jamais.
-		CompletableFuture<Void> fini = new CompletableFuture<>();
+		// The waiting thread is a background task thread, never the server's or the HTTP one.
+		// The timeout bounds the wait: a frozen server must not block the exporter forever,
+		// or the metric showing it is frozen would never arrive.
+		CompletableFuture<Void> done = new CompletableFuture<>();
 		Bukkit.getScheduler().runTask(plugin, () -> {
 			try {
-				tache.run();
-				fini.complete(null);
+				task.run();
+				done.complete(null);
 			} catch (Throwable t) {
-				fini.completeExceptionally(t);
+				done.completeExceptionally(t);
 			}
 		});
-		fini.get(5, TimeUnit.SECONDS);
+		done.get(5, TimeUnit.SECONDS);
 	}
 
 	@Override
-	public void repeter(Runnable tache, long intervalleSecondes) {
-		long ticks = Math.max(1, intervalleSecondes * 20);
-		Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, tache, ticks, ticks);
+	public void scheduleRepeating(Runnable task, long intervalSeconds) {
+		long ticks = Math.max(1, intervalSeconds * 20);
+		Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, task, ticks, ticks);
 	}
-
 }

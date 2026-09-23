@@ -13,166 +13,161 @@ import fr.samflix.vaniametrics.api.MetricRegistry;
 import fr.samflix.vaniametrics.api.Platform;
 
 /**
- * LE CONTENEUR : processeur, ÉTRANGLEMENT, mémoire, entrées-sorties.
+ * The container: CPU, throttling, memory, I/O.
  *
- * <p>C'est le collecteur que rien d'autre ne fournit, et celui qui répond aux pannes les plus
- * difficiles à diagnostiquer. Sur un serveur conteneurisé, le TPS peut s'effondrer sans que spark
- * ne voie quoi que ce soit d'anormal dans le profil : la cause est un étage plus bas, le noyau a
- * gelé le processus parce qu'il dépassait son quota de processeur. {@code nr_throttled} le dit, et
- * rien dans l'écosystème Minecraft ne le lit.
+ * <p>Nothing else provides this, and it explains the hardest outages to diagnose. In a container,
+ * TPS can collapse while spark sees nothing wrong in the profile: the cause is one layer down, the
+ * kernel froze the process because it exceeded its CPU quota. {@code nr_throttled} shows it, and
+ * nothing in the Minecraft ecosystem reads it.
  *
- * <p>TOUT EST DANS DES FICHIERS TEXTE de {@code /sys/fs/cgroup} — aucune dépendance, aucun
- * privilège, aucun appel natif. Le collecteur s'éteint de lui-même si le répertoire n'existe pas,
- * ce qui est le cas hors conteneur et sur cgroup v1.
+ * <p>Everything comes from text files under {@code /sys/fs/cgroup}: no dependency, no privilege,
+ * no native call. The collector turns itself off when the files are missing, which is the case
+ * outside a container and on cgroup v1.
  *
- * <p>UNE LECTURE À NE PAS RATER : {@code memory.current} contre {@code memory.max}, et pas le tas
- * de la JVM. Une JVM bornée à 6 Gio dans un conteneur de 8 Gio peut se faire tuer par le noyau
- * alors que son tas est à moitié vide — métaspace, piles de fils, tampons directs et cache de
- * fichiers mappés vivent hors du tas et comptent quand même. {@code memory.events} est la seule
- * métrique qui dit qu'un OOM kill a eu lieu.
+ * <p>Compare {@code memory.current} to {@code memory.max}, not the JVM heap. A JVM capped at 6 GiB
+ * in an 8 GiB container can be OOM-killed with a half-empty heap: metaspace, thread stacks, direct
+ * buffers and mapped files live off-heap and still count. {@code memory.events} is the only metric
+ * that tells an OOM kill happened.
  */
 public final class CgroupCollector implements Collector {
 
-	private static final Path RACINE = Path.of("/sys/fs/cgroup");
+	private static final Path ROOT = Path.of("/sys/fs/cgroup");
 
-	private final Platform plateforme;
-	private final boolean disponible;
+	private final Platform platform;
+	private final boolean available;
 
-	private Counter cpuTemps;
-	private Counter cpuUtilisateur;
-	private Counter cpuSysteme;
-	private Counter etranglePeriodes;
-	private Counter etrangleTemps;
-	private Counter periodes;
+	private Counter cpuUsage;
+	private Counter cpuUser;
+	private Counter cpuSystem;
+	private Counter throttledPeriods;
+	private Counter throttledTime;
+	private Counter periods;
 	private Gauge quota;
-	private Gauge memoire;
-	private Gauge memoireLimite;
-	private Gauge memoireDetail;
-	private Counter defautsPage;
+	private Gauge memory;
+	private Gauge memoryLimit;
+	private Gauge memoryBreakdown;
+	private Counter pageFaults;
 	private Counter oom;
-	private Counter ioOctets;
+	private Counter ioBytes;
 	private Counter ioOperations;
 
-	public CgroupCollector(Platform plateforme) {
-		this.plateforme = plateforme;
-		this.disponible = Files.isReadable(RACINE.resolve("cpu.stat"));
+	public CgroupCollector(Platform platform) {
+		this.platform = platform;
+		this.available = Files.isReadable(ROOT.resolve("cpu.stat"));
 	}
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "cgroup";
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
-		if (!disponible) {
-			plateforme.info("collecteur cgroup — /sys/fs/cgroup/cpu.stat illisible, hors conteneur "
-					+ "ou cgroup v1 : rien ne sera publié");
+	public void declare(MetricRegistry r) {
+		if (!available) {
+			platform.info("collector cgroup: /sys/fs/cgroup/cpu.stat not readable (not in a "
+					+ "container, or cgroup v1); nothing will be published");
 			return;
 		}
-		cpuTemps = r.counter("host_cpu_usage_seconds_total", "Temps processeur consommé par le conteneur.");
-		cpuUtilisateur = r.counter("host_cpu_user_seconds_total", "Temps processeur en espace utilisateur.");
-		cpuSysteme = r.counter("host_cpu_system_seconds_total", "Temps processeur en noyau.");
-		etranglePeriodes = r.counter("host_cpu_throttled_periods_total",
-				"Périodes pendant lesquelles le noyau a GELÉ le conteneur faute de quota. "
-						+ "Toute valeur qui monte explique un TPS bas que spark ne voit pas.");
-		etrangleTemps = r.counter("host_cpu_throttled_seconds_total",
-				"Temps total passé gelé par le noyau.");
-		periodes = r.counter("host_cpu_periods_total",
-				"Périodes d'ordonnancement écoulées. Le rapport avec throttled_periods donne la "
-						+ "proportion de temps étranglé.");
+		cpuUsage = r.counter("host_cpu_usage_seconds_total", "CPU time used by the container.");
+		cpuUser = r.counter("host_cpu_user_seconds_total", "CPU time in user space.");
+		cpuSystem = r.counter("host_cpu_system_seconds_total", "CPU time in kernel space.");
+		throttledPeriods = r.counter("host_cpu_throttled_periods_total",
+				"Periods during which the kernel FROZE the container for lack of quota. "
+						+ "A rising value explains low TPS that spark does not see.");
+		throttledTime = r.counter("host_cpu_throttled_seconds_total",
+				"Total time spent frozen by the kernel.");
+		periods = r.counter("host_cpu_periods_total",
+				"Elapsed scheduling periods. The ratio with throttled_periods gives the share of "
+						+ "throttled time.");
 		quota = r.gauge("host_cpu_quota_cores",
-				"Quota processeur, en cœurs. NaN quand aucune limite n'est posée — et sans limite, "
-						+ "l'étranglement est impossible.");
-		memoire = r.gauge("host_memory_usage_bytes", "Mémoire du CONTENEUR, tas de la JVM compris.");
-		memoireLimite = r.gauge("host_memory_limit_bytes", "Plafond mémoire du conteneur.");
-		memoireDetail = r.gauge("host_memory_bytes", "Détail de la mémoire. type = anon|file|kernel|sock.", "type");
-		defautsPage = r.counter("host_memory_page_faults_total", "Défauts de page. type = minor|major.", "type");
+				"CPU quota, in cores. NaN when no limit is set, in which case throttling cannot happen.");
+		memory = r.gauge("host_memory_usage_bytes", "Memory used by the CONTAINER, JVM heap included.");
+		memoryLimit = r.gauge("host_memory_limit_bytes", "Container memory limit.");
+		memoryBreakdown = r.gauge("host_memory_bytes", "Memory breakdown. type = anon|file|kernel|sock.", "type");
+		pageFaults = r.counter("host_memory_page_faults_total", "Page faults. type = minor|major.", "type");
 		oom = r.counter("host_memory_oom_events_total",
-				"Événements de dépassement mémoire. type = oom (allocation refusée) | "
-						+ "oom_kill (processus tué). La seconde est toujours un incident.",
+				"Out-of-memory events. type = oom (allocation refused) | oom_kill (process killed). "
+						+ "The latter is always an incident.",
 				"type");
-		ioOctets = r.counter("host_io_bytes_total", "Octets lus et écrits, par périphérique.", "device", "operation");
-		ioOperations = r.counter("host_io_operations_total", "Opérations disque, par périphérique.", "device", "operation");
+		ioBytes = r.counter("host_io_bytes_total", "Bytes read and written, per device.", "device", "operation");
+		ioOperations = r.counter("host_io_operations_total", "Disk operations, per device.", "device", "operation");
 	}
 
 	@Override
-	public void relever(MetricRegistry r) throws IOException {
-		if (!disponible) {
+	public void collect(MetricRegistry r) throws IOException {
+		if (!available) {
 			return;
 		}
-		lireCpu();
-		lireMemoire();
-		lireIo();
+		readCpu();
+		readMemory();
+		readIo();
 	}
 
-	private void lireCpu() throws IOException {
-		for (String ligne : lignes("cpu.stat")) {
-			String[] m = ligne.split("\\s+");
+	private void readCpu() throws IOException {
+		for (String line : lines("cpu.stat")) {
+			String[] m = line.split("\\s+");
 			if (m.length < 2) {
 				continue;
 			}
-			double v = valeur(m[1]);
+			double v = parse(m[1]);
 			switch (m[0]) {
-				// Les compteurs du noyau sont en MICROsecondes et cumulatifs depuis le démarrage
-				// du conteneur — exactement la sémantique d'un compteur Prometheus, à l'unité
-				// près. On pose la valeur au lieu d'ajouter un delta.
-				case "usage_usec" -> mirror(cpuTemps, v / 1e6);
-				case "user_usec" -> mirror(cpuUtilisateur, v / 1e6);
-				case "system_usec" -> mirror(cpuSysteme, v / 1e6);
-				case "nr_periods" -> mirror(periodes, v);
-				case "nr_throttled" -> mirror(etranglePeriodes, v);
-				case "throttled_usec" -> mirror(etrangleTemps, v / 1e6);
+				// Kernel counters are in microseconds and cumulative since the container started:
+				// exactly Prometheus counter semantics, units aside. Mirror instead of adding deltas.
+				case "usage_usec" -> cpuUsage.mirror(v / 1e6);
+				case "user_usec" -> cpuUser.mirror(v / 1e6);
+				case "system_usec" -> cpuSystem.mirror(v / 1e6);
+				case "nr_periods" -> periods.mirror(v);
+				case "nr_throttled" -> throttledPeriods.mirror(v);
+				case "throttled_usec" -> throttledTime.mirror(v / 1e6);
 				default -> { }
 			}
 		}
 
-		List<String> max = lignes("cpu.max");
+		List<String> max = lines("cpu.max");
 		if (!max.isEmpty()) {
 			String[] m = max.get(0).trim().split("\\s+");
-			// « max <periode> » = aucune limite. Publier une valeur numérique ferait croire à un
-			// quota ; NaN dit « pas de limite », ce que Grafana affiche comme un trou.
-			quota.set(m.length < 2 || "max".equals(m[0]) ? Double.NaN : valeur(m[0]) / valeur(m[1]));
+			// "max <period>" means no limit. A number would suggest a quota; NaN shows as a gap in
+			// Grafana.
+			quota.set(m.length < 2 || "max".equals(m[0]) ? Double.NaN : parse(m[0]) / parse(m[1]));
 		}
 	}
 
-	private void lireMemoire() throws IOException {
-		List<String> courant = lignes("memory.current");
-		if (!courant.isEmpty()) {
-			memoire.set(valeur(courant.get(0).trim()));
+	private void readMemory() throws IOException {
+		List<String> current = lines("memory.current");
+		if (!current.isEmpty()) {
+			memory.set(parse(current.get(0).trim()));
 		}
-		List<String> limite = lignes("memory.max");
-		if (!limite.isEmpty()) {
-			String v = limite.get(0).trim();
-			memoireLimite.set("max".equals(v) ? Double.NaN : valeur(v));
+		List<String> limit = lines("memory.max");
+		if (!limit.isEmpty()) {
+			String v = limit.get(0).trim();
+			memoryLimit.set("max".equals(v) ? Double.NaN : parse(v));
 		}
-		for (String ligne : lignes("memory.stat")) {
-			String[] m = ligne.split("\\s+");
+		for (String line : lines("memory.stat")) {
+			String[] m = line.split("\\s+");
 			if (m.length < 2) {
 				continue;
 			}
 			switch (m[0]) {
-				case "anon", "file", "kernel", "sock" -> memoireDetail.set(valeur(m[1]), m[0]);
-				case "pgfault" -> mirror(defautsPage, valeur(m[1]), "minor");
-				case "pgmajfault" -> mirror(defautsPage, valeur(m[1]), "major");
+				case "anon", "file", "kernel", "sock" -> memoryBreakdown.set(parse(m[1]), m[0]);
+				case "pgfault" -> pageFaults.mirror(parse(m[1]), "minor");
+				case "pgmajfault" -> pageFaults.mirror(parse(m[1]), "major");
 				default -> { }
 			}
 		}
-		for (String ligne : lignes("memory.events")) {
-			String[] m = ligne.split("\\s+");
+		for (String line : lines("memory.events")) {
+			String[] m = line.split("\\s+");
 			if (m.length >= 2 && ("oom".equals(m[0]) || "oom_kill".equals(m[0]))) {
-				mirror(oom, valeur(m[1]), m[0]);
+				oom.mirror(parse(m[1]), m[0]);
 			}
 		}
 	}
 
-	private void lireIo() throws IOException {
-		// Une ligne par périphérique : « 8:16 rbytes=0 wbytes=10059776 rios=0 wios=32 … ».
-		// L'étiquette est le couple majeur:mineur et non un nom lisible — le conteneur n'a pas
-		// accès à /sys/dev/block pour le résoudre, et un nom de périphérique instable ferait de
-		// toute façon une mauvaise étiquette.
-		for (String ligne : lignes("io.stat")) {
-			String[] m = ligne.trim().split("\\s+");
+	private void readIo() throws IOException {
+		// One line per device: "8:16 rbytes=0 wbytes=10059776 rios=0 wios=32 ...".
+		// The label is major:minor rather than a readable name: the container cannot read
+		// /sys/dev/block to resolve it, and device names are unstable labels anyway.
+		for (String line : lines("io.stat")) {
+			String[] m = line.trim().split("\\s+");
 			if (m.length < 2) {
 				continue;
 			}
@@ -182,11 +177,11 @@ public final class CgroupCollector implements Collector {
 				if (eq < 0) {
 					continue;
 				}
-				String cle = m[i].substring(0, eq);
-				double v = valeur(m[i].substring(eq + 1));
-				switch (cle) {
-					case "rbytes" -> ioOctets.mirror(v, dev, "read");
-					case "wbytes" -> ioOctets.mirror(v, dev, "write");
+				String key = m[i].substring(0, eq);
+				double v = parse(m[i].substring(eq + 1));
+				switch (key) {
+					case "rbytes" -> ioBytes.mirror(v, dev, "read");
+					case "wbytes" -> ioBytes.mirror(v, dev, "write");
 					case "rios" -> ioOperations.mirror(v, dev, "read");
 					case "wios" -> ioOperations.mirror(v, dev, "write");
 					default -> { }
@@ -195,18 +190,12 @@ public final class CgroupCollector implements Collector {
 		}
 	}
 
-	private void mirror(Counter c, double v, String... etiquettes) {
-		if (c != null) {
-			c.mirror(v, etiquettes);
-		}
-	}
-
-	private List<String> lignes(String fichier) throws IOException {
-		Path p = RACINE.resolve(fichier);
+	private List<String> lines(String file) throws IOException {
+		Path p = ROOT.resolve(file);
 		return Files.isReadable(p) ? Files.readAllLines(p, StandardCharsets.UTF_8) : List.of();
 	}
 
-	private static double valeur(String s) {
+	private static double parse(String s) {
 		try {
 			return Double.parseDouble(s);
 		} catch (NumberFormatException e) {

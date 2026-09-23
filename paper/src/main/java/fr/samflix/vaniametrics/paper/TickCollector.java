@@ -9,86 +9,86 @@ import fr.samflix.vaniametrics.api.Histogram;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * La boucle de jeu, vue par Paper seul — sans spark, qui a son module.
+ * The game loop, as seen by Paper alone (spark has its own collector).
  *
- * <p>LE TPS NE SUFFIT PAS, ET LE MSPT EST LA VRAIE MÉTRIQUE. Le TPS plafonne à 20 : un serveur qui
- * met 45 ms par tick affiche 20,0 tant qu'il rattrape son retard, et n'affiche 19 qu'une fois
- * franchie la barre des 50 ms — c'est-à-dire trop tard. La durée de tick, elle, monte
- * proportionnellement à la charge dès la première milliseconde.
+ * <p>TPS is not enough; MSPT is the real metric. TPS is capped at 20: a server taking 45 ms per
+ * tick shows 20.0 while it catches up and only drops to 19 once past 50 ms, which is too late.
+ * Tick duration rises with load from the first millisecond.
  *
- * <p>{@code getTickTimes()} rend les durées BRUTES en nanosecondes, une par tick sur la dernière
- * minute. C'est mieux que des quantiles pré-calculés : on en fait un histogramme, et Grafana
- * calcule ensuite n'importe quel quantile sur n'importe quelle fenêtre.
+ * <p>{@code getTickTimes()} returns raw durations in nanoseconds, one per tick over the last
+ * minute. Better than precomputed quantiles: they go into a histogram, and Grafana computes any
+ * quantile over any window.
  *
- * <p>CHAQUE TICK N'EST COMPTÉ QU'UNE FOIS. Le tampon de Paper est glissant et se recouvre d'un
- * scrape à l'autre : sans mémoire du dernier tick vu, on observerait les mêmes durées plusieurs
- * fois et l'histogramme mentirait. D'où le suivi de {@code getCurrentTick()}.
+ * <p>Each tick is counted once. Paper's buffer is a sliding window that overlaps between scrapes;
+ * without remembering the last tick seen, the same durations would be observed several times.
+ * Hence tracking {@code getCurrentTick()}.
  */
 final class TickCollector implements Collector {
 
-	private Gauge tps;
-	private Gauge dureeMoyenne;
-	private Histogram duree;
-	private Counter ticks;
-	private Gauge joueursMax;
+	private static final String[] TPS_WINDOWS = {"1m", "5m", "15m"};
 
-	private int dernierTickVu = -1;
+	private Gauge tps;
+	private Gauge averageTick;
+	private Histogram tickDuration;
+	private Counter ticks;
+	private Gauge maxPlayers;
+
+	private int lastTickSeen = -1;
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "tick";
 	}
 
 	@Override
-	public boolean filPrincipal() {
-		// getTickTimes() lit un tampon que le fil du serveur écrit. Le lire ailleurs donnerait
-		// des valeurs à moitié écrites — rarement, et donc au pire moment.
+	public boolean needsMainThread() {
+		// getTickTimes() reads a buffer the server thread writes. Reading it from another thread
+		// gives half-written values: rarely, and so at the worst moment.
 		return true;
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
+	public void declare(MetricRegistry r) {
 		tps = r.gauge("server_tps",
-				"Ticks par seconde, plafonné à 20. window = 1m|5m|15m. À ne PAS utiliser comme "
-						+ "signal d'alerte : il ne bouge qu'une fois le serveur déjà en retard.",
+				"Ticks per second, capped at 20. window = 1m|5m|15m. Do NOT alert on it: it only "
+						+ "moves once the server is already behind.",
 				"window");
-		dureeMoyenne = r.gauge("server_tick_average_seconds",
-				"Durée moyenne d'un tick, telle que Paper la calcule.");
-		duree = r.histogram("server_tick_duration_seconds",
-				"Distribution des durées de tick. 0,05 s est le seuil : au-delà, le serveur prend "
-						+ "du retard. C'est LE signal d'alerte.",
-				Histogram.SECONDES_TICK);
-		ticks = r.counter("server_ticks_total", "Ticks écoulés depuis le démarrage.");
-		joueursMax = r.gauge("server_players_max", "Places annoncées par le serveur.");
+		averageTick = r.gauge("server_tick_average_seconds",
+				"Average tick duration, as computed by Paper.");
+		tickDuration = r.histogram("server_tick_duration_seconds",
+				"Tick duration distribution. 0.05 s is the threshold: above it the server falls "
+						+ "behind. This is THE alerting signal.",
+				Histogram.TICK_SECONDS);
+		ticks = r.counter("server_ticks_total", "Ticks since startup.");
+		maxPlayers = r.gauge("server_players_max", "Player slots advertised by the server.");
 	}
 
 	@Override
-	public void relever(MetricRegistry r) {
-		double[] valeurs = Bukkit.getTPS();
-		String[] fenetres = {"1m", "5m", "15m"};
-		for (int i = 0; i < valeurs.length && i < fenetres.length; i++) {
-			tps.set(Math.min(valeurs[i], 20.0), fenetres[i]);
+	public void collect(MetricRegistry r) {
+		double[] values = Bukkit.getTPS();
+		for (int i = 0; i < values.length && i < TPS_WINDOWS.length; i++) {
+			tps.set(Math.min(values[i], 20.0), TPS_WINDOWS[i]);
 		}
 
-		dureeMoyenne.set(Bukkit.getAverageTickTime() / 1000.0);
+		averageTick.set(Bukkit.getAverageTickTime() / 1000.0);
 
-		int tickCourant = Bukkit.getCurrentTick();
-		ticks.mirror(tickCourant);
+		int currentTick = Bukkit.getCurrentTick();
+		ticks.mirror(currentTick);
 
-		long[] durees = Bukkit.getTickTimes();
-		if (durees != null && durees.length > 0) {
-			// Le tampon contient les N derniers ticks, le plus récent en dernier. On ne reprend
-			// que ceux écoulés depuis le relevé précédent — au plus la taille du tampon.
-			int nouveaux = dernierTickVu < 0 ? durees.length
-					: Math.min(tickCourant - dernierTickVu, durees.length);
-			for (int i = durees.length - nouveaux; i < durees.length; i++) {
-				if (i >= 0 && durees[i] > 0) {
-					duree.observe(durees[i] / 1e9);
+		long[] durations = Bukkit.getTickTimes();
+		if (durations != null && durations.length > 0) {
+			// The buffer holds the last N ticks, most recent last. Only take those since the
+			// previous collection, at most the whole buffer.
+			int fresh = lastTickSeen < 0 ? durations.length
+					: Math.min(currentTick - lastTickSeen, durations.length);
+			for (int i = durations.length - fresh; i < durations.length; i++) {
+				if (durations[i] > 0) {
+					tickDuration.observe(durations[i] / 1e9);
 				}
 			}
 		}
-		dernierTickVu = tickCourant;
+		lastTickSeen = currentTick;
 
-		joueursMax.set(Bukkit.getMaxPlayers());
+		maxPlayers.set(Bukkit.getMaxPlayers());
 	}
 }

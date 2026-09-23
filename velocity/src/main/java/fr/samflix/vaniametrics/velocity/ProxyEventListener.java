@@ -12,66 +12,64 @@ import fr.samflix.vaniametrics.api.Counter;
 import fr.samflix.vaniametrics.api.MetricRegistry;
 
 /**
- * Ce qui traverse le proxy.
+ * What goes through the proxy.
  *
- * <p>{@code mc_proxy_server_switches_total} est celle qui raconte le réseau : d'où les joueurs
- * viennent, où ils vont, et quel serveur les perd. Elle n'a de sens que sur le proxy — aucun
- * serveur d'arrière-plan ne peut la voir.
+ * <p>{@code mc_proxy_server_switches_total} describes the network: where players come from, where
+ * they go, and which server loses them. Only the proxy can see it.
  *
- * <p>Les étiquettes {@code from} et {@code to} sont bornées par le nombre de serveurs déclarés,
- * qui est petit et connu. C'est ce qui les rend acceptables là où un pseudo ne le serait pas.
+ * <p>The {@code from} and {@code to} labels are bounded by the number of registered servers, which
+ * is small and known. That is what makes them acceptable where a player name would not be.
  *
- * <p>{@code priority = Short.MIN_VALUE} et non {@code order = PostOrder.LAST}, qui est déprécié
- * dans Velocity 3.5 : la priorité numérique l'a remplacé, et la plus basse passe en dernier. On
- * observe donc l'événement tel que les autres plugins l'ont laissé — c'est le pendant exact de
- * {@code EventPriority.MONITOR} côté Bukkit.
+ * <p>{@code priority = Short.MIN_VALUE} rather than {@code order = PostOrder.LAST}, deprecated in
+ * Velocity 3.5: numeric priority replaced it, and the lowest runs last. The event is seen as other
+ * plugins left it, the equivalent of Bukkit's {@code EventPriority.MONITOR}.
  */
 final class ProxyEventListener {
 
-	private final Counter connexions;
-	private final Counter changements;
-	private final Counter expulsions;
+	private final Counter connections;
+	private final Counter switches;
+	private final Counter kicks;
 	private final Counter pings;
 
 	ProxyEventListener(MetricRegistry r) {
-		connexions = r.counter("proxy_connections_total",
-				"Tentatives de connexion. result = pre_login|login|disconnect.", "result");
-		changements = r.counter("proxy_server_switches_total",
-				"Passages d'un serveur à l'autre. from = « none » à la première connexion.",
+		connections = r.counter("proxy_connections_total",
+				"Connection attempts. result = pre_login|login|disconnect.", "result");
+		switches = r.counter("proxy_server_switches_total",
+				"Moves from one server to another. from = \"none\" on first connection.",
 				"from", "to");
-		expulsions = r.counter("proxy_kicks_from_server_total",
-				"Joueurs renvoyés par un serveur d'arrière-plan.", "server");
+		kicks = r.counter("proxy_kicks_from_server_total",
+				"Players kicked by a backend server.", "server");
 		pings = r.counter("proxy_pings_total",
-				"Pings de la liste des serveurs. C'est le trafic des clients qui REGARDENT le "
-						+ "serveur sans s'y connecter — un indicateur d'attention, pas de charge.");
+				"Server list pings: clients LOOKING at the server without joining. A measure of "
+						+ "attention, not load.");
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)
 	public void onPreLogin(PreLoginEvent e) {
-		connexions.inc("pre_login");
+		connections.inc("pre_login");
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)
 	public void onLogin(LoginEvent e) {
-		connexions.inc("login");
+		connections.inc("login");
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)
 	public void onDisconnect(DisconnectEvent e) {
-		connexions.inc("disconnect");
+		connections.inc("disconnect");
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)
 	public void onConnected(ServerConnectedEvent e) {
-		String depuis = e.getPreviousServer()
+		String from = e.getPreviousServer()
 				.map(s -> s.getServerInfo().getName())
 				.orElse("none");
-		changements.inc(depuis, e.getServer().getServerInfo().getName());
+		switches.inc(from, e.getServer().getServerInfo().getName());
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)
 	public void onKicked(KickedFromServerEvent e) {
-		expulsions.inc(e.getServer().getServerInfo().getName());
+		kicks.inc(e.getServer().getServerInfo().getName());
 	}
 
 	@Subscribe(priority = Short.MIN_VALUE)

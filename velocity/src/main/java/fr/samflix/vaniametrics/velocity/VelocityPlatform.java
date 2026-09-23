@@ -1,6 +1,7 @@
 package fr.samflix.vaniametrics.velocity;
 
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -11,23 +12,18 @@ import com.velocitypowered.api.proxy.ProxyServer;
 
 import fr.samflix.vaniametrics.api.Platform;
 
-/** L'adaptateur Velocity. Même contrat que côté Paper, un monde différent derrière. */
 final class VelocityPlatform implements Platform {
 
 	private final ProxyServer proxy;
-	private final Logger journal;
-	private final Path repertoire;
+	private final Logger logger;
+	private final Path dataDirectory;
 	private final Object plugin;
 
-	VelocityPlatform(ProxyServer proxy, Logger journal, Path repertoire, Object plugin) {
+	VelocityPlatform(ProxyServer proxy, Logger logger, Path dataDirectory, Object plugin) {
 		this.proxy = proxy;
-		this.journal = journal;
-		this.repertoire = repertoire;
+		this.logger = logger;
+		this.dataDirectory = dataDirectory;
 		this.plugin = plugin;
-	}
-
-	ProxyServer proxy() {
-		return proxy;
 	}
 
 	@Override
@@ -36,47 +32,47 @@ final class VelocityPlatform implements Platform {
 	}
 
 	@Override
-	public String nomServeur() {
+	public String serverName() {
 		String env = System.getenv("VANIA_SERVER_NAME");
 		return env != null && !env.isEmpty() ? env : "proxy";
 	}
 
 	@Override
-	public String versionServeur() {
+	public String serverVersion() {
 		return proxy.getVersion().getName() + " " + proxy.getVersion().getVersion();
 	}
 
 	@Override
-	public Path repertoire() {
-		return repertoire;
+	public Path dataDirectory() {
+		return dataDirectory;
 	}
 
 	@Override
 	public void info(String message) {
-		journal.info(message);
+		logger.info(message);
 	}
 
 	@Override
-	public void avertir(String message) {
-		journal.warn(message);
+	public void warn(String message) {
+		logger.warn(message);
 	}
 
 	@Override
-	public void erreur(String message, Throwable cause) {
-		journal.error(message, cause);
+	public void error(String message, Throwable cause) {
+		logger.error(message, cause);
 	}
 
 	@Override
-	public boolean pluginPresent(String nom) {
+	public boolean isPluginPresent(String name) {
 		PluginManager pm = proxy.getPluginManager();
-		if (pm.getPlugin(nom.toLowerCase(java.util.Locale.ROOT)).isPresent()) {
+		if (pm.getPlugin(name.toLowerCase(Locale.ROOT)).isPresent()) {
 			return true;
 		}
-		// Velocity indexe ses plugins par IDENTIFIANT — « luckperms », en minuscules — là où
-		// Bukkit les indexe par NOM affiché — « LuckPerms ». Un module écrit pour les deux
-		// plateformes ne doit pas avoir à le savoir : on cherche aussi par nom déclaré.
+		// Velocity indexes plugins by id ("luckperms", lower case) where Bukkit uses the display
+		// name ("LuckPerms"). A collector written for both platforms should not have to care, so
+		// also match on the declared name.
 		for (PluginContainer c : pm.getPlugins()) {
-			if (c.getDescription().getName().filter(nom::equalsIgnoreCase).isPresent()) {
+			if (c.getDescription().getName().filter(name::equalsIgnoreCase).isPresent()) {
 				return true;
 			}
 		}
@@ -84,20 +80,18 @@ final class VelocityPlatform implements Platform {
 	}
 
 	@Override
-	public void surFilPrincipal(Runnable tache) {
-		// VELOCITY N'A PAS DE FIL PRINCIPAL. Il n'y a pas de boucle de jeu à protéger : tout est
-		// asynchrone et piloté par Netty. Exécuter sur place est donc la traduction JUSTE de
-		// « sur le fil principal », et non un raccourci.
-		tache.run();
+	public void runOnMainThread(Runnable task) {
+		// Velocity has no main thread and no game loop to protect: everything is asynchronous and
+		// driven by Netty. Running in place is the correct translation, not a shortcut.
+		task.run();
 	}
 
 	@Override
-	public void repeter(Runnable tache, long intervalleSecondes) {
+	public void scheduleRepeating(Runnable task, long intervalSeconds) {
 		proxy.getScheduler()
-				.buildTask(plugin, tache)
-				.repeat(intervalleSecondes, TimeUnit.SECONDS)
-				.delay(intervalleSecondes, TimeUnit.SECONDS)
+				.buildTask(plugin, task)
+				.repeat(intervalSeconds, TimeUnit.SECONDS)
+				.delay(intervalSeconds, TimeUnit.SECONDS)
 				.schedule();
 	}
-
 }

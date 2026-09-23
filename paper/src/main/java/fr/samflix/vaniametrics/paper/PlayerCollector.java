@@ -3,6 +3,7 @@ package fr.samflix.vaniametrics.paper;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Statistic;
@@ -14,184 +15,174 @@ import fr.samflix.vaniametrics.api.Counter;
 import fr.samflix.vaniametrics.api.Gauge;
 import fr.samflix.vaniametrics.api.Histogram;
 import fr.samflix.vaniametrics.api.MetricRegistry;
-import fr.samflix.vaniametrics.api.Joueur;
+import fr.samflix.vaniametrics.api.PlayerRef;
 import fr.samflix.vaniametrics.api.PlayerSeries;
 
 /**
- * Les joueurs connectés — EN AGRÉGAT, jamais nommément.
+ * Online players, at two levels.
  *
- * <p>DEUX NIVEAUX, ET IL FAUT LES DISTINGUER.
+ * <p><b>Aggregates</b>: sums, histograms, breakdowns over bounded sets such as client brand or
+ * locale. No player label; they answer "how many, when".
  *
- * <p>Les <b>agrégats</b> d'abord — sommes, histogrammes, répartitions sur des ensembles bornés :
- * une marque de client, une langue. Ils n'ont aucune étiquette de joueur et répondent à « combien,
- * quand ».
+ * <p><b>Per-player detail</b>, only for online players and under a cap; see {@link PlayerSeries}
+ * for the reasoning. It answers "who", which no aggregate can, without a database or a log
+ * pipeline.
  *
- * <p>Le <b>détail par joueur</b> ensuite, et seulement pour les joueurs CONNECTÉS, sous un plafond
- * — voir {@link PlayerSeries}, qui porte tout le raisonnement. Il répond à « qui », ce qu'un
- * agrégat ne saura jamais faire, et il le fait sans base de données ni collecteur de logs.
- *
- * <p>Les statistiques vanilla sont cumulatives depuis toujours et par joueur ; on les SOMME sur
- * les joueurs connectés. Ce total redescend donc quand un joueur se déconnecte, ce qui en fait une
- * jauge et non un compteur — le compteur, lui, est alimenté par les événements.
+ * <p>Vanilla statistics are per player and cumulative forever; they are summed over online
+ * players. That total drops when a player leaves, so it is a gauge, not a counter. Event counters
+ * live in {@link GameEventListener}.
  */
 final class PlayerCollector implements Collector {
 
-	private Gauge enLigne;
-	private Histogram ping;
-	private Gauge parMarque;
-	private Gauge parLangue;
-	private Gauge statistiques;
-	private Counter tempsJeu;
-
-	// Le détail par joueur. Les instruments sont passés à PlayerSeries, qui les efface quand la
-	// population change — sans quoi un joueur parti garderait sa dernière valeur pour toujours.
-	private Gauge joueurPing;
-	private Gauge joueurTempsJeu;
-	private Gauge joueurStatistique;
-	private PlayerSeries series;
-
 	private final Config config;
+
+	private Gauge online;
+	private Histogram ping;
+	private Gauge byBrand;
+	private Gauge byLocale;
+	private Gauge statistics;
+	private Counter playtime;
+
+	// Per-player detail. These instruments are handed to PlayerSeries, which clears them when the
+	// set of online players changes.
+	private Gauge playerPing;
+	private Gauge playerPlaytime;
+	private Gauge playerStatistic;
+	private PlayerSeries series;
 
 	PlayerCollector(Config config) {
 		this.config = config;
 	}
 
 	@Override
-	public String nom() {
+	public String name() {
 		return "players";
 	}
 
 	@Override
-	public boolean filPrincipal() {
+	public boolean needsMainThread() {
 		return true;
 	}
 
 	@Override
-	public void declarer(MetricRegistry r) {
-		enLigne = r.gauge("server_players_online", "Joueurs connectés.");
+	public void declare(MetricRegistry r) {
+		online = r.gauge("server_players_online", "Online players.");
 		ping = r.histogram("server_players_ping_seconds",
-				"Distribution du ping des joueurs connectés.", Histogram.SECONDES_PING);
-		// LA VERSION DU CLIENT N'EST PAS ICI, et c'est vérifié : org.bukkit.entity.Player n'a
-		// aucune méthode qui la donne. Elle passe par ViaVersion, donc par un MODULE — c'est
-		// exactement la frontière que le système de modules trace : le noyau ne connaît que ce
-		// que la plateforme expose d'elle-même.
-		parMarque = r.gauge("server_players_by_brand",
-				"Joueurs par marque de client annoncée. Falsifiable en un mod : elle renseigne "
-						+ "sur les joueurs honnêtes, pas sur les tricheurs.",
+				"Ping distribution of online players.", Histogram.PING_SECONDS);
+		// No client version here: org.bukkit.entity.Player has no method for it. It comes from
+		// ViaVersion, so from a collector plugin. The core only reports what the platform exposes.
+		byBrand = r.gauge("server_players_by_brand",
+				"Players by advertised client brand. A mod can fake it: it describes honest "
+						+ "players, not cheaters.",
 				"brand");
-		parLangue = r.gauge("server_players_by_locale", "Joueurs par langue du client.", "locale");
-		statistiques = r.gauge("server_player_statistics",
-				"Somme d'une statistique vanilla sur les joueurs CONNECTÉS. Redescend quand ils "
-						+ "partent : c'est une jauge, pas un compteur.",
+		byLocale = r.gauge("server_players_by_locale", "Players by client locale.", "locale");
+		statistics = r.gauge("server_player_statistics",
+				"Sum of a vanilla statistic over ONLINE players. Drops when they leave: a gauge, "
+						+ "not a counter.",
 				"statistic");
-		tempsJeu = r.counter("server_playtime_seconds_total",
-				"Temps de jeu cumulé, tous joueurs connectés confondus.");
+		playtime = r.counter("server_playtime_seconds_total",
+				"Cumulative playtime of all online players.");
 
-		// « player » ET « uuid » sur chacune : le pseudonyme pour lire et filtrer, l'identifiant
-		// pour que la série survive à un changement de pseudonyme. Voir Joueur.
-		joueurPing = r.gauge("server_player_ping_seconds",
-				"Ping d'un joueur connecté.", "player", "uuid");
-		joueurTempsJeu = r.gauge("server_player_playtime_seconds",
-				"Temps de jeu total d'un joueur connecté.", "player", "uuid");
-		joueurStatistique = r.gauge("server_player_statistic",
-				"Une statistique vanilla, joueur par joueur. Publiée tant qu'il est connecté — "
-						+ "ce qui suffit, puisqu'il ne peut rien faire hors ligne.",
+		playerPing = r.gauge("server_player_ping_seconds",
+				"Ping of an online player.", "player", "uuid");
+		playerPlaytime = r.gauge("server_player_playtime_seconds",
+				"Total playtime of an online player.", "player", "uuid");
+		playerStatistic = r.gauge("server_player_statistic",
+				"A vanilla statistic, per player. Published while the player is online, which is "
+						+ "enough since nothing happens offline.",
 				"player", "uuid", "statistic");
 		series = new PlayerSeries(r, config);
 	}
 
 	@Override
-	public void relever(MetricRegistry r) {
-		var joueurs = Bukkit.getOnlinePlayers();
-		enLigne.set(joueurs.size());
+	public void collect(MetricRegistry r) {
+		var players = Bukkit.getOnlinePlayers();
+		online.set(players.size());
 
-		var connectes = joueurs.stream().map(PlayerCollector::identite).toList();
-		var retenus = series.retenir(connectes, joueurPing, joueurTempsJeu, joueurStatistique);
-		// Les identifiants retenus, pour savoir à qui publier le détail sans refaire le plafond.
-		var publies = retenus.stream().map(Joueur::uuid).collect(java.util.stream.Collectors.toSet());
+		var refs = players.stream().map(PlayerCollector::ref).toList();
+		var selected = series.select(refs, playerPing, playerPlaytime, playerStatistic);
+		var published = selected.stream().map(PlayerRef::uuid).collect(Collectors.toSet());
 
-		// Les répartitions sont remises à zéro : une version de client qui n'est plus connectée
-		// doit disparaître, pas rester figée sur sa dernière valeur.
-		parMarque.clear();
-		parLangue.clear();
+		// Reset breakdowns so a brand or locale nobody uses any more disappears instead of
+		// staying frozen at its last value.
+		byBrand.clear();
+		byLocale.clear();
 
-		Map<String, Integer> marques = new HashMap<>();
-		Map<String, Integer> langues = new HashMap<>();
-		long kills = 0;
-		long mobs = 0;
-		long morts = 0;
-		long degatsInfliges = 0;
-		long degatsSubis = 0;
-		long sauts = 0;
-		long minutes = 0;
+		Map<String, Integer> brands = new HashMap<>();
+		Map<String, Integer> locales = new HashMap<>();
+		long playerKills = 0;
+		long mobKills = 0;
+		long deaths = 0;
+		long damageDealt = 0;
+		long damageTaken = 0;
+		long jumps = 0;
+		long playTicks = 0;
 
-		for (Player j : joueurs) {
-			ping.observe(j.getPing() / 1000.0);
-			if (publies.contains(j.getUniqueId().toString())) {
-				detail(j);
+		for (Player p : players) {
+			ping.observe(p.getPing() / 1000.0);
+			if (published.contains(p.getUniqueId().toString())) {
+				publishDetail(p);
 			}
-			marques.merge(marque(j), 1, Integer::sum);
-			langues.merge(langue(j), 1, Integer::sum);
+			brands.merge(brand(p), 1, Integer::sum);
+			locales.merge(locale(p), 1, Integer::sum);
 
-			kills += lire(j, Statistic.PLAYER_KILLS);
-			mobs += lire(j, Statistic.MOB_KILLS);
-			morts += lire(j, Statistic.DEATHS);
-			degatsInfliges += lire(j, Statistic.DAMAGE_DEALT);
-			degatsSubis += lire(j, Statistic.DAMAGE_TAKEN);
-			sauts += lire(j, Statistic.JUMP);
-			minutes += lire(j, Statistic.PLAY_ONE_MINUTE);
+			playerKills += stat(p, Statistic.PLAYER_KILLS);
+			mobKills += stat(p, Statistic.MOB_KILLS);
+			deaths += stat(p, Statistic.DEATHS);
+			damageDealt += stat(p, Statistic.DAMAGE_DEALT);
+			damageTaken += stat(p, Statistic.DAMAGE_TAKEN);
+			jumps += stat(p, Statistic.JUMP);
+			playTicks += stat(p, Statistic.PLAY_ONE_MINUTE);
 		}
 
-		marques.forEach((m, n) -> parMarque.set(n, m));
-		langues.forEach((l, n) -> parLangue.set(n, l));
+		brands.forEach((b, n) -> byBrand.set(n, b));
+		locales.forEach((l, n) -> byLocale.set(n, l));
 
-		statistiques.set(kills, "player_kills");
-		statistiques.set(mobs, "mob_kills");
-		statistiques.set(morts, "deaths");
-		// Les dégâts vanilla sont en dixièmes de cœur ; on rend des points de vie, qui sont
-		// l'unité que le joueur voit.
-		statistiques.set(degatsInfliges / 10.0, "damage_dealt");
-		statistiques.set(degatsSubis / 10.0, "damage_taken");
-		statistiques.set(sauts, "jumps");
-		// PLAY_ONE_MINUTE compte des TICKS malgré son nom — un piège classique de l'API.
-		tempsJeu.mirror(minutes / 20.0);
+		statistics.set(playerKills, "player_kills");
+		statistics.set(mobKills, "mob_kills");
+		statistics.set(deaths, "deaths");
+		// Vanilla damage statistics are in tenths of a health point; publish health points.
+		statistics.set(damageDealt / 10.0, "damage_dealt");
+		statistics.set(damageTaken / 10.0, "damage_taken");
+		statistics.set(jumps, "jumps");
+		// PLAY_ONE_MINUTE counts ticks despite its name, a classic API trap.
+		playtime.mirror(playTicks / 20.0);
 	}
 
-	/** Le détail d'un joueur. Appelé seulement pour ceux que le plafond laisse passer. */
-	private void detail(Player j) {
-		Joueur qui = identite(j);
-		joueurPing.set(j.getPing() / 1000.0, qui.etiquettes());
-		joueurTempsJeu.set(lire(j, Statistic.PLAY_ONE_MINUTE) / 20.0, qui.etiquettes());
-		joueurStatistique.set(lire(j, Statistic.PLAYER_KILLS), qui.etiquettes("player_kills"));
-		joueurStatistique.set(lire(j, Statistic.MOB_KILLS), qui.etiquettes("mob_kills"));
-		joueurStatistique.set(lire(j, Statistic.DEATHS), qui.etiquettes("deaths"));
-		joueurStatistique.set(lire(j, Statistic.DAMAGE_DEALT) / 10.0, qui.etiquettes("damage_dealt"));
-		joueurStatistique.set(lire(j, Statistic.DAMAGE_TAKEN) / 10.0, qui.etiquettes("damage_taken"));
+	/** Only called for players the cap lets through. */
+	private void publishDetail(Player p) {
+		PlayerRef ref = ref(p);
+		playerPing.set(p.getPing() / 1000.0, ref.labels());
+		playerPlaytime.set(stat(p, Statistic.PLAY_ONE_MINUTE) / 20.0, ref.labels());
+		playerStatistic.set(stat(p, Statistic.PLAYER_KILLS), ref.labels("player_kills"));
+		playerStatistic.set(stat(p, Statistic.MOB_KILLS), ref.labels("mob_kills"));
+		playerStatistic.set(stat(p, Statistic.DEATHS), ref.labels("deaths"));
+		playerStatistic.set(stat(p, Statistic.DAMAGE_DEALT) / 10.0, ref.labels("damage_dealt"));
+		playerStatistic.set(stat(p, Statistic.DAMAGE_TAKEN) / 10.0, ref.labels("damage_taken"));
 	}
 
-	/** Le couple pseudonyme / identifiant, dans la forme que {@link Joueur#de} impose à tous. */
-	private static Joueur identite(Player j) {
-		return Joueur.de(j.getUniqueId(), j.getName());
+	private static PlayerRef ref(Player p) {
+		return PlayerRef.of(p.getUniqueId(), p.getName());
 	}
 
-	private int lire(Player j, Statistic s) {
+	private int stat(Player p, Statistic s) {
 		try {
-			return j.getStatistic(s);
+			return p.getStatistic(s);
 		} catch (IllegalArgumentException e) {
-			// Une statistique retirée par une version de Minecraft. Zéro plutôt qu'une panne.
+			// A statistic removed by a Minecraft version. Zero rather than a failure.
 			return 0;
 		}
 	}
 
-	private String marque(Player j) {
-		String m = j.getClientBrandName();
-		return m == null || m.isBlank() ? "unknown" : m.toLowerCase(Locale.ROOT);
+	private String brand(Player p) {
+		String b = p.getClientBrandName();
+		return b == null || b.isBlank() ? "unknown" : b.toLowerCase(Locale.ROOT);
 	}
 
-	private String langue(Player j) {
-		// locale() et non getLocale(), qui est déprécié : le premier rend un java.util.Locale
-		// déjà normalisé, le second une chaîne brute du client.
-		java.util.Locale l = j.locale();
+	private String locale(Player p) {
+		// locale() rather than the deprecated getLocale(): it returns an already normalised
+		// java.util.Locale instead of the client's raw string.
+		Locale l = p.locale();
 		return l == null ? "unknown" : l.toLanguageTag().toLowerCase(Locale.ROOT);
 	}
 }

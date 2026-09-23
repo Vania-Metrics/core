@@ -1,44 +1,45 @@
-# vania-metrics — core
+# VaniaMetrics core
 
-L'API publique et le noyau (Paper + Velocity) de VaniaMetrics. Build Gradle, Java 21.
+The public API and the core plugin (Paper and Velocity) of VaniaMetrics, a Prometheus exporter
+for Minecraft servers. Gradle build, Java 21.
 
 ```sh
-./gradlew build                  # tout
-./gradlew compileJava            # compile seulement
-./gradlew publishToMavenLocal    # publie l'API dans ~/.m2 (avec son .pom)
+./gradlew build                  # everything
+./gradlew compileJava            # compile only
+./gradlew publishToMavenLocal    # publish the API to ~/.m2 (with its .pom)
 ```
 
-## Organisation
+## Layout
 
-| Dossier     | Projet Gradle              | Rôle                                                      |
-|-------------|----------------------------|-----------------------------------------------------------|
-| `api/`      | `vania-metrics-api`        | l'interface publique, sur le JDK seul — aucune dépendance |
-| `common/`   | `vania-metrics-common`     | exportateur, serveur HTTP, collecteurs JVM/disque/cgroup  |
-| `paper/`    | `vania-metrics-paper`      | le noyau, plugin Bukkit                                   |
-| `velocity/` | `vania-metrics-velocity`   | le noyau, plugin Velocity                                 |
+| Directory   | Gradle project           | Contents                                               |
+|-------------|--------------------------|--------------------------------------------------------|
+| `api/`      | `vania-metrics-api`      | the public API, JDK only, no dependencies              |
+| `common/`   | `vania-metrics-common`   | exporter, HTTP server, JVM/disk/cgroup collectors      |
+| `paper/`    | `vania-metrics-paper`    | the core, as a Bukkit plugin                           |
+| `velocity/` | `vania-metrics-velocity` | the core, as a Velocity plugin                         |
 
-## Ce qui sort
+## Outputs
 
 ```
 api/build/libs/vania-metrics-api-<v>.jar
-paper/build/libs/VaniaMetrics-<v>-paper.jar         API + common embarqués
-velocity/build/libs/VaniaMetrics-<v>-velocity.jar   API + common embarqués
+paper/build/libs/VaniaMetrics-<v>-paper.jar         API + common bundled
+velocity/build/libs/VaniaMetrics-<v>-velocity.jar   API + common bundled
 ```
 
-La version est lue dans `api/…/Version.java`, jamais recopiée. Une version publiée
-se tague `vX.Y.Z` : c'est la ref que les collecteurs épinglent.
+The version is read from `api/.../Version.java`, never copied. Releases are tagged `vX.Y.Z`;
+that is the ref collectors pin.
 
-## Dépendances
+## Dependencies
 
-Versions dans `gradle/libs.versions.toml`. Toutes les empreintes SHA-256 sont
-vérifiées par Gradle (`gradle/verification-metadata.xml`). Après une montée de version :
+Versions live in `gradle/libs.versions.toml`. Gradle verifies every SHA-256 checksum against
+`gradle/verification-metadata.xml`. After a version bump:
 
 ```sh
 ./gradlew --write-verification-metadata sha256 build
 ```
 
-## Les collecteurs
+## Collectors
 
-Chaque collecteur vit dans son propre dépôt (`Vania-Metrics/colecteur-<nom>`) et
-inclut ce dépôt-ci comme build composite, cloné à un tag : il dépend de
-`fr.samflix:vania-metrics-api`, que Gradle relie au projet `api/`.
+Each collector lives in its own repository (`Vania-Metrics/colecteur-<name>`) and includes this
+repository as a composite build, checked out at a tag: it depends on
+`fr.samflix:vania-metrics-api`, which Gradle substitutes with the `api/` project.

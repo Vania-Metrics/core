@@ -7,103 +7,96 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * LE SEUL ENDROIT OÙ L'ON A LE DROIT D'ÉTIQUETER PAR JOUEUR.
+ * The only place where labelling by player is allowed.
  *
- * <p>Une étiquette {@code player="…"} crée une série temporelle par joueur. La règle qu'on se
- * donnait au départ — « jamais » — était juste à l'échelle de mille joueurs et fausse à la nôtre :
- * cinquante places et sept crânes font trois cent cinquante séries, quelques mégaoctets, à comparer
- * aux près de trois cents séries que le serveur publie déjà. Ce qui compte n'est donc pas le
- * principe mais LA BORNE, et cette classe est la borne.
+ * <p>A {@code player="..."} label creates one time series per player. "Never do it" is the right
+ * rule at a thousand players and the wrong one for a small server: fifty slots and seven player
+ * heads make 350 series, a few megabytes, next to the ~300 series the server already publishes.
+ * What matters is the bound, and this class is the bound.
  *
- * <p>DEUX GARANTIES, et elles se complètent :
+ * <p>Two guarantees:
  *
  * <ol>
- *   <li><b>seuls les joueurs CONNECTÉS sont publiés.</b> Ce n'est pas une perte : un joueur ne peut
- *       déclencher un événement que connecté — trouver un crâne, gagner de l'argent, mourir. Une
- *       série qui ne vit que pendant la session capture donc la totalité de ce qu'il fait. Quand il
- *       part, Prometheus pose un marqueur d'obsolescence et la série s'arrête proprement, son
- *       historique conservé ;
- *   <li><b>un plafond dur.</b> Au-delà, on cesse de publier le détail et {@code
- *       mc_exporter_player_series_dropped} le dit. Une dégradation annoncée vaut mieux qu'un
- *       Prometheus qui gonfle en silence.
+ *   <li><b>Only online players are published.</b> Nothing is lost: a player can only trigger an
+ *       event while online (find a head, earn money, die), so a series that lives for the session
+ *       captures everything they do. When they leave, Prometheus writes a staleness marker and the
+ *       series ends cleanly, its history kept.
+ *   <li><b>A hard cap.</b> Beyond it, per-player detail stops and
+ *       {@code mc_exporter_player_series_dropped} says so. Announced degradation beats a
+ *       Prometheus that grows silently.
  * </ol>
  *
- * <p>Ce qui reste interdit, et sans exception : étiqueter par joueur une métrique à haute
- * fréquence — un paquet, un bloc cassé. Ici on publie des ÉTATS, pas des flux.
+ * <p>Still forbidden, without exception: per-player labels on high-frequency metrics such as a
+ * packet or a broken block. This publishes states, not flows.
  *
- * <p>DEUX ÉTIQUETTES PAR JOUEUR, {@code player} et {@code uuid} — voir {@link Joueur}. Elles ne
- * coûtent pas une série de plus, puisqu'elles se correspondent exactement, et elles évitent d'avoir
- * à choisir entre un tableau de bord lisible et un suivi qui survit à un changement de pseudonyme.
+ * <p>Two labels per player, {@code player} and {@code uuid}; see {@link PlayerRef}.
  */
 public final class PlayerSeries {
 
 	private final Config config;
-	private final Gauge abandons;
+	private final Gauge dropped;
 
 	/**
-	 * Les joueurs publiés au dernier passage, pour savoir quelles séries effacer.
+	 * Players published on the previous pass, to know which series to drop.
 	 *
-	 * <p>Indexés par IDENTIFIANT et non par pseudonyme : un joueur qui se renomme en cours de
-	 * session ne doit pas passer pour deux personnes différentes.
+	 * <p>Keyed by UUID, not name, so a player renaming mid-session is not counted as two people.
 	 */
-	private final Set<String> publies = new LinkedHashSet<>();
+	private final Set<String> published = new LinkedHashSet<>();
 
-	public PlayerSeries(MetricRegistry registre, Config config) {
+	public PlayerSeries(MetricRegistry registry, Config config) {
 		this.config = config;
-		this.abandons = registre.gauge("exporter_player_series_dropped",
-				"Joueurs dont le détail n'est PAS publié, faute de place sous le plafond "
-						+ "collector.players.max_series. Une valeur non nulle veut dire que les "
-						+ "métriques par joueur sont incomplètes — et le dire vaut mieux que de "
-						+ "laisser croire le contraire.");
+		this.dropped = registry.gauge("exporter_player_series_dropped",
+				"Players whose detail is NOT published because of the "
+						+ "collector.players.max_series cap. A non-zero value means per-player "
+						+ "metrics are incomplete.");
 	}
 
-	/** Le détail par joueur est-il demandé ? */
-	public boolean actif() {
-		return config.actif("collector.players.per_player", true);
+	/** Whether per-player detail is enabled ({@code collector.players.per_player}). */
+	public boolean isEnabled() {
+		return config.getBoolean("collector.players.per_player", true);
 	}
 
 	/**
-	 * Décide qui publier, et efface les séries de ceux qui ne le sont plus.
+	 * Decides who to publish and clears the series of players who no longer are.
 	 *
-	 * <p>À appeler AU DÉBUT de chaque relevé, avec les joueurs connectés. Les instruments passés
-	 * sont remis à zéro pour les noms disparus — sans quoi un joueur déconnecté garderait sa
-	 * dernière valeur publiée pour toujours.
+	 * <p>Call it at the start of each collection with the online players. The given instruments are
+	 * cleared when the set of players changes; otherwise a player who left would keep their last
+	 * value forever.
 	 *
-	 * @return les joueurs à publier, plafond appliqué. Vide si le détail est désactivé.
+	 * @return the players to publish, cap applied. Empty if per-player detail is disabled.
 	 */
-	public Collection<Joueur> retenir(Collection<Joueur> connectes, Metric... instruments) {
-		if (!actif()) {
-			effacer(instruments);
-			abandons.set(connectes.size());
+	public Collection<PlayerRef> select(Collection<PlayerRef> online, Metric... instruments) {
+		if (!isEnabled()) {
+			clear(instruments);
+			dropped.set(online.size());
 			return List.of();
 		}
-		int plafond = config.entier("collector.players.max_series", 200);
-		List<Joueur> retenus = new ArrayList<>();
-		Set<String> identifiants = new LinkedHashSet<>();
-		int ignores = 0;
-		for (Joueur j : connectes) {
-			if (retenus.size() < plafond) {
-				retenus.add(j);
-				identifiants.add(j.uuid());
+		int cap = config.getInt("collector.players.max_series", 200);
+		List<PlayerRef> selected = new ArrayList<>();
+		Set<String> uuids = new LinkedHashSet<>();
+		int skipped = 0;
+		for (PlayerRef p : online) {
+			if (selected.size() < cap) {
+				selected.add(p);
+				uuids.add(p.uuid());
 			} else {
-				ignores++;
+				skipped++;
 			}
 		}
-		abandons.set(ignores);
+		dropped.set(skipped);
 
-		// On efface TOUT puis on republie : distinguer les séries à retirer une par une
-		// demanderait de connaître les étiquettes de chaque instrument, que seul l'appelant
-		// connaît. Effacer coûte une carte vidée, republier coûte ce qu'on allait écrire de
-		// toute façon.
-		if (!publies.equals(identifiants)) {
-			effacer(instruments);
-			publies.clear();
-			publies.addAll(identifiants);
+		// Clear everything and republish: removing series one by one would require knowing each
+		// instrument's labels, which only the caller does. Clearing costs an emptied map,
+		// republishing costs what was going to be written anyway.
+		if (!published.equals(uuids)) {
+			clear(instruments);
+			published.clear();
+			published.addAll(uuids);
 		}
-		return retenus;
+		return selected;
 	}
 
-	private void effacer(Metric... instruments) {
+	private void clear(Metric... instruments) {
 		for (Metric m : instruments) {
 			if (m != null) {
 				m.clear();

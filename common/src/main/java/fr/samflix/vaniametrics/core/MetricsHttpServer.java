@@ -7,95 +7,96 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
-import fr.samflix.vaniametrics.api.Config;
-import fr.samflix.vaniametrics.api.Platform;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import fr.samflix.vaniametrics.api.Config;
+import fr.samflix.vaniametrics.api.Platform;
+
 /**
- * Le point de collecte : {@code GET /metrics}.
+ * The scrape endpoint: {@code GET /metrics}.
  *
- * <p>{@code com.sun.net.httpserver} est dans le JDK depuis Java 6 et suffit largement : on sert un
- * document texte à un client toutes les quinze secondes. Embarquer Jetty ou Netty pour ça
- * ajouterait des mégaoctets et un risque de conflit de classes avec le serveur, qui embarque déjà
- * les siens.
+ * <p>{@code com.sun.net.httpserver} has been in the JDK since Java 6 and is plenty for serving a
+ * text document to one client every fifteen seconds. Bundling Jetty or Netty would add megabytes
+ * and risk class conflicts with the server, which ships its own.
  *
- * <p>SON EXÉCUTEUR EST À LUI. Un fil dédié, qui n'est ni celui du serveur ni celui de
- * l'ordonnanceur : un scrape lent ne doit pouvoir retarder ni un tick, ni une tâche de fond.
+ * <p>It has its own executor, separate from the server thread and the scheduler: a slow scrape
+ * must not delay a tick or a background task.
  */
 final class MetricsHttpServer {
 
-	private static final String TYPE_CONTENU = "text/plain; version=0.0.4; charset=utf-8";
+	private static final String CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
+	private static final String PLAIN_TEXT = "text/plain; charset=utf-8";
 
-	private final Platform plateforme;
+	private final Platform platform;
 	private final Config config;
 	private final Supplier<String> scrape;
 
-	private HttpServer serveur;
+	private HttpServer server;
 
-	MetricsHttpServer(Platform plateforme, Config config, Supplier<String> scrape) {
-		this.plateforme = plateforme;
+	MetricsHttpServer(Platform platform, Config config, Supplier<String> scrape) {
+		this.platform = platform;
 		this.config = config;
 		this.scrape = scrape;
 	}
 
-	void demarrer() throws IOException {
-		String adresse = config.texte("http.bind", "0.0.0.0");
-		int port = config.entier("http.port", 9940);
-		String chemin = config.texte("http.path", "/metrics");
-		String jeton = config.texte("http.token", "");
+	void start() throws IOException {
+		String bind = config.getString("http.bind", "0.0.0.0");
+		int port = config.getInt("http.port", 9940);
+		String path = config.getString("http.path", "/metrics");
+		String token = config.getString("http.token", "");
 
-		serveur = HttpServer.create(new InetSocketAddress(adresse, port), 4);
-		serveur.createContext(chemin, e -> repondre(e, jeton));
-		// Une sonde de vivacité qui ne coûte rien, pour un probe Kubernetes.
-		serveur.createContext("/healthz", e -> ecrire(e, 200, "ok\n", "text/plain; charset=utf-8"));
-		serveur.setExecutor(Executors.newFixedThreadPool(2, r -> {
+		server = HttpServer.create(new InetSocketAddress(bind, port), 4);
+		server.createContext(path, e -> handle(e, token));
+		// A free liveness endpoint, for a Kubernetes probe.
+		server.createContext("/healthz", e -> write(e, 200, "ok\n", PLAIN_TEXT));
+		server.setExecutor(Executors.newFixedThreadPool(2, r -> {
 			Thread t = new Thread(r, "vania-metrics-http");
 			t.setDaemon(true);
 			return t;
 		}));
-		serveur.start();
-		plateforme.info("métriques exposées sur http://" + adresse + ":" + port + chemin
-				+ (jeton.isEmpty() ? "" : " (jeton exigé)"));
+		server.start();
+		platform.info("serving metrics on http://" + bind + ":" + port + path
+				+ (token.isEmpty() ? "" : " (token required)"));
 	}
 
-	void arreter() {
-		if (serveur != null) {
-			// Un délai de zéro : on ferme tout de suite. Les scrapes en cours sont perdus, ce qui
-			// est sans conséquence — Prometheus réessaiera dans quinze secondes.
-			serveur.stop(0);
+	void stop() {
+		if (server != null) {
+			// No grace period: an in-flight scrape is lost, and Prometheus retries on the next
+			// interval.
+			server.stop(0);
 		}
 	}
 
-	private void repondre(HttpExchange e, String jeton) throws IOException {
+	private void handle(HttpExchange e, String token) throws IOException {
 		try {
 			if (!"GET".equals(e.getRequestMethod())) {
-				ecrire(e, 405, "méthode non acceptée\n", "text/plain; charset=utf-8");
+				write(e, 405, "method not allowed\n", PLAIN_TEXT);
 				return;
 			}
-			if (!jeton.isEmpty()) {
-				String entete = e.getRequestHeaders().getFirst("Authorization");
-				if (entete == null || !entete.equals("Bearer " + jeton)) {
-					ecrire(e, 401, "jeton absent ou faux\n", "text/plain; charset=utf-8");
+			if (!token.isEmpty()) {
+				String header = e.getRequestHeaders().getFirst("Authorization");
+				if (header == null || !header.equals("Bearer " + token)) {
+					write(e, 401, "missing or invalid token\n", PLAIN_TEXT);
 					return;
 				}
 			}
-			ecrire(e, 200, scrape.get(), TYPE_CONTENU);
-		} catch (Exception erreur) {
-			plateforme.erreur("réponse au scrape", erreur);
-			// 500 et pas une page vide : Prometheus doit voir un échec, sinon il enregistre une
-			// absence de métriques comme si le serveur n'avait rien à dire.
-			ecrire(e, 500, "collecte en échec\n", "text/plain; charset=utf-8");
+			write(e, 200, scrape.get(), CONTENT_TYPE);
+		} catch (Exception error) {
+			platform.error("answering scrape", error);
+			// A 500 rather than an empty page: Prometheus must see a failure, otherwise it records
+			// the absence of metrics as if the server had nothing to report.
+			write(e, 500, "collection failed\n", PLAIN_TEXT);
 		}
 	}
 
-	private void ecrire(HttpExchange e, int code, String corps, String typeContenu)
+	private void write(HttpExchange e, int status, String body, String contentType)
 			throws IOException {
-		byte[] octets = corps.getBytes(StandardCharsets.UTF_8);
-		e.getResponseHeaders().set("Content-Type", typeContenu);
-		e.sendResponseHeaders(code, octets.length);
+		byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+		e.getResponseHeaders().set("Content-Type", contentType);
+		e.sendResponseHeaders(status, bytes.length);
 		try (OutputStream out = e.getResponseBody()) {
-			out.write(octets);
+			out.write(bytes);
 		}
 	}
 }

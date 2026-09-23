@@ -1,127 +1,128 @@
 package fr.samflix.vaniametrics.api;
 
+import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Le registre : il tient les instruments et sait les rendre au format de Prometheus.
+ * The registry: holds the instruments and renders them in the Prometheus text format.
  *
- * <p>Il n'y a pas de bibliothèque derrière, et c'est délibéré. Le format d'exposition tient en une
- * page ; y ajouter {@code simpleclient} ferait entrer une dépendance à reloger dans un jar de
- * plugin, avec le risque de conflit de classes que ça traîne quand deux plugins embarquent la même
- * en versions différentes. Ce qui suit est tout ce dont on a besoin.
+ * <p>No client library on purpose. The exposition format fits on one page; pulling in
+ * {@code simpleclient} would add a dependency to relocate in a plugin jar, with the class conflicts
+ * that follow when two plugins bundle different versions of it.
  */
 public final class MetricRegistry {
 
 	/**
-	 * Le préfixe de toutes les métriques.
+	 * The prefix of every metric.
 	 *
-	 * <p>Un préfixe unique par sujet est une convention de Prometheus, pas une coquetterie : c'est
-	 * lui qui rend {@code mc_} utilisable en autocomplétion dans Grafana et qui évite qu'une
-	 * métrique du serveur se confonde avec une du nœud.
+	 * <p>One prefix per subject is a Prometheus convention: it makes {@code mc_} usable for
+	 * autocompletion in Grafana and keeps server metrics apart from node metrics.
 	 */
-	public static final String PREFIXE = "mc_";
+	public static final String PREFIX = "mc_";
 
 	/**
-	 * LES DOMAINES AUTORISÉS, ET LA CONVENTION DE NOMMAGE.
+	 * Allowed domains, and the naming convention.
 	 *
 	 * <pre>
-	 *   mc_&lt;domaine&gt;_&lt;sujet&gt;[_&lt;unité&gt;]
+	 *   mc_&lt;domain&gt;_&lt;subject&gt;[_&lt;unit&gt;]
 	 * </pre>
 	 *
-	 * <p>LE DOMAINE DIT D'OÙ VIENT LA MESURE, et c'est sa seule raison d'être. En lisant
-	 * {@code mc_server_tps} on sait que le serveur de jeu la fournit lui-même ; en lisant
-	 * {@code mc_economy_total} on sait qu'elle vient d'un plugin, et lequel se retrouve par
-	 * {@code mc_exporter_module_info}.
+	 * <p>The domain says where the measurement comes from. {@code mc_server_tps} is provided by the
+	 * game server itself; {@code mc_economy_total} comes from a plugin, and which one is answered by
+	 * {@code mc_exporter_collector_info}.
 	 *
 	 * <table border="1">
-	 *   <caption>Domaines</caption>
-	 *   <tr><th>domaine</th><th>origine</th><th>ce qu'il couvre</th></tr>
-	 *   <tr><td>{@code server}</td><td>serveur de base</td><td>tps, ticks, joueurs, morts, blocs, chat</td></tr>
-	 *   <tr><td>{@code world}</td><td>serveur de base</td><td>entités, chunks, blocs-entités, météo</td></tr>
-	 *   <tr><td>{@code proxy}</td><td>Velocity</td><td>joueurs, serveurs d'arrière-plan</td></tr>
-	 *   <tr><td>{@code jvm}</td><td>machine virtuelle</td><td>mémoire, ramasse-miettes, fils</td></tr>
-	 *   <tr><td>{@code host}</td><td>conteneur</td><td>processeur, mémoire, disque, entrées-sorties</td></tr>
-	 *   <tr><td>{@code economy}</td><td>plugin</td><td>monnaies, soldes, flux</td></tr>
+	 *   <caption>Domains</caption>
+	 *   <tr><th>domain</th><th>source</th><th>covers</th></tr>
+	 *   <tr><td>{@code server}</td><td>game server</td><td>tps, ticks, players, deaths, blocks, chat</td></tr>
+	 *   <tr><td>{@code world}</td><td>game server</td><td>entities, chunks, tile entities, weather</td></tr>
+	 *   <tr><td>{@code proxy}</td><td>Velocity</td><td>players, backend servers</td></tr>
+	 *   <tr><td>{@code jvm}</td><td>JVM</td><td>memory, garbage collection, threads</td></tr>
+	 *   <tr><td>{@code host}</td><td>container</td><td>CPU, memory, disk, I/O</td></tr>
+	 *   <tr><td>{@code economy}</td><td>plugin</td><td>currencies, balances, flows</td></tr>
 	 *   <tr><td>{@code quest}</td><td>plugin</td><td>tags, points, journal</td></tr>
-	 *   <tr><td>{@code permission}</td><td>plugin</td><td>groupes, pistes</td></tr>
-	 *   <tr><td>{@code network}</td><td>plugin</td><td>paquets, version des clients</td></tr>
-	 *   <tr><td>{@code multiverse}</td><td>plugin</td><td>mondes déclarés, chargés ou non</td></tr>
-	 *   <tr><td>{@code spark}</td><td>plugin</td><td>quantiles de tick, processeur, allocation</td></tr>
-	 *   <tr><td>{@code anticheat}</td><td>plugin</td><td>violations, contrôles déclenchés</td></tr>
-	 *   <tr><td>{@code mob}</td><td>plugin</td><td>mobs personnalisés apparus, tués</td></tr>
-	 *   <tr><td>{@code region}</td><td>plugin</td><td>régions protégées, actions refusées</td></tr>
-	 *   <tr><td>{@code pregen}</td><td>plugin</td><td>avancement de la prégénération</td></tr>
-	 *   <tr><td>{@code inventory}</td><td>plugin</td><td>bascules d'inventaire entre mondes</td></tr>
-	 *   <tr><td>{@code portal}</td><td>plugin</td><td>passages de portail</td></tr>
-	 *   <tr><td>{@code nova}</td><td>plugin</td><td>blocs et objets personnalisés</td></tr>
-	 *   <tr><td>{@code crate}</td><td>plugin</td><td>coffres ouverts, récompenses tirées, clés</td></tr>
-	 *   <tr><td>{@code placeholder}</td><td>plugin</td><td>valeurs relevées par PlaceholderAPI</td></tr>
-	 *   <tr><td>{@code exporter}</td><td>ce plugin</td><td>sa propre santé</td></tr>
+	 *   <tr><td>{@code permission}</td><td>plugin</td><td>groups, tracks</td></tr>
+	 *   <tr><td>{@code network}</td><td>plugin</td><td>packets, client versions</td></tr>
+	 *   <tr><td>{@code multiverse}</td><td>plugin</td><td>declared worlds, loaded or not</td></tr>
+	 *   <tr><td>{@code spark}</td><td>plugin</td><td>tick quantiles, CPU, allocation</td></tr>
+	 *   <tr><td>{@code anticheat}</td><td>plugin</td><td>violations, triggered checks</td></tr>
+	 *   <tr><td>{@code mob}</td><td>plugin</td><td>custom mobs spawned, killed</td></tr>
+	 *   <tr><td>{@code region}</td><td>plugin</td><td>protected regions, denied actions</td></tr>
+	 *   <tr><td>{@code pregen}</td><td>plugin</td><td>pregeneration progress</td></tr>
+	 *   <tr><td>{@code inventory}</td><td>plugin</td><td>per-world inventory switches</td></tr>
+	 *   <tr><td>{@code portal}</td><td>plugin</td><td>portal uses</td></tr>
+	 *   <tr><td>{@code nova}</td><td>plugin</td><td>custom blocks and items</td></tr>
+	 *   <tr><td>{@code crate}</td><td>plugin</td><td>crates opened, rewards drawn, keys</td></tr>
+	 *   <tr><td>{@code placeholder}</td><td>plugin</td><td>values read through PlaceholderAPI</td></tr>
+	 *   <tr><td>{@code exporter}</td><td>this plugin</td><td>its own health</td></tr>
+	 *   <tr><td>{@code build}</td><td>this plugin</td><td>version information</td></tr>
 	 * </table>
 	 *
-	 * <p>LE DÉTAIL PAR JOUEUR RESTE DANS SON DOMAINE, en sous-segment : le solde d'un joueur est
-	 * {@code mc_economy_player_balance} et non {@code mc_player_balance}. Le domaine d'abord,
-	 * toujours — sinon {@code mc_player_*} deviendrait un fourre-tout où plus rien ne dit d'où
-	 * vient quoi.
+	 * <p>Per-player detail stays in its domain as a sub-segment: a player's balance is
+	 * {@code mc_economy_player_balance}, not {@code mc_player_balance}. Domain first, always;
+	 * otherwise {@code mc_player_*} becomes a catch-all where nothing says where anything comes
+	 * from.
 	 *
-	 * <p>LA LISTE EST FERMÉE ET VÉRIFIÉE À LA DÉCLARATION. Une convention qui n'est qu'écrite dans
-	 * un document dérive au troisième module ; celle-ci refuse de se charger. Ajouter un domaine
-	 * est un geste délibéré, qui passe par ce tableau.
+	 * <p>The list is closed and enforced at declaration. A convention that only lives in a
+	 * document drifts by the third collector; this one refuses to load. Adding a domain is a
+	 * deliberate change to this set.
 	 */
-	private static final java.util.Set<String> DOMAINES = java.util.Set.of(
-			// Ce que le serveur et la machine exposent d'eux-mêmes.
+	private static final Set<String> DOMAINS = Set.of(
+			// Exposed by the server and the machine themselves.
 			"server", "world", "proxy", "jvm", "host",
-			// Un plugin derrière chacun.
+			// Backed by a plugin.
 			"economy", "quest", "permission", "network", "multiverse", "spark",
 			"anticheat", "mob", "region", "pregen", "inventory", "portal", "nova",
 			"placeholder", "crate",
-			// L'exportateur lui-même.
+			// The exporter itself.
 			"exporter", "build");
 
 	private final Map<String, Metric> instruments = new ConcurrentHashMap<>();
 
-	/** Déclare une jauge. Rappeler la méthode avec le même nom rend le même instrument. */
-	public Gauge gauge(String nom, String aide, String... etiquettes) {
-		verifier(nom);
+	/** Declares a gauge. Calling it again with the same name returns the same instrument. */
+	public Gauge gauge(String name, String help, String... labelNames) {
+		checkDomain(name);
 		return (Gauge) instruments.computeIfAbsent(
-				PREFIXE + nom, n -> new Gauge(n, aide, etiquettes));
+				PREFIX + name, n -> new Gauge(n, help, labelNames));
 	}
 
-	/** Déclare un compteur. Le nom DOIT se terminer par {@code _total}. */
-	public Counter counter(String nom, String aide, String... etiquettes) {
-		verifier(nom);
-		if (!nom.endsWith("_total")) {
-			throw new IllegalArgumentException("un compteur se termine par _total : " + nom);
+	/** Declares a counter. The name must end in {@code _total}. */
+	public Counter counter(String name, String help, String... labelNames) {
+		checkDomain(name);
+		if (!name.endsWith("_total")) {
+			throw new IllegalArgumentException("a counter name must end in _total: " + name);
 		}
 		return (Counter) instruments.computeIfAbsent(
-				PREFIXE + nom, n -> new Counter(n, aide, etiquettes));
+				PREFIX + name, n -> new Counter(n, help, labelNames));
 	}
 
-	/** Déclare un histogramme. Le nom porte l'unité, pas de suffixe {@code _total}. */
-	public Histogram histogram(String nom, String aide, double[] seuils, String... etiquettes) {
-		verifier(nom);
+	/** Declares a histogram. The name carries the unit, no {@code _total} suffix. */
+	public Histogram histogram(String name, String help, double[] buckets, String... labelNames) {
+		checkDomain(name);
 		return (Histogram) instruments.computeIfAbsent(
-				PREFIXE + nom, n -> new Histogram(n, aide, seuils, etiquettes));
+				PREFIX + name, n -> new Histogram(n, help, buckets, labelNames));
 	}
 
 	/**
-	 * Fait respecter la convention, à la déclaration.
+	 * Enforces the naming convention at declaration.
 	 *
-	 * <p>ÉCHOUER ICI EST LE BUT. Un module mal nommé ne se charge pas, son message dit quoi
-	 * corriger, et les autres continuent — c'est {@code Exporter} qui attrape. L'alternative,
-	 * une règle écrite quelque part, aurait dérivé au troisième module.
+	 * <p>Failing here is the point: a misnamed collector does not load, the message says what to
+	 * fix, and the others keep running because the exporter catches the exception.
 	 */
-	private static void verifier(String nom) {
-		int sep = nom.indexOf('_');
-		String domaine = sep < 0 ? nom : nom.substring(0, sep);
-		if (!DOMAINES.contains(domaine)) {
+	private static void checkDomain(String name) {
+		int sep = name.indexOf('_');
+		String domain = sep < 0 ? name : name.substring(0, sep);
+		if (!DOMAINS.contains(domain)) {
 			throw new IllegalArgumentException(
-					"« " + nom + " » n'a pas de domaine connu. Attendu mc_<domaine>_<sujet>, "
-							+ "domaine parmi " + new java.util.TreeSet<>(DOMAINES)
-							+ " — voir la table de MetricRegistry.");
+					"'" + name + "' has no known domain. Expected mc_<domain>_<subject>, "
+							+ "domain one of " + new TreeSet<>(DOMAINS)
+							+ " (see MetricRegistry).");
 		}
 	}
 
@@ -130,82 +131,81 @@ public final class MetricRegistry {
 	}
 
 	/**
-	 * Rend tout le registre au format texte de Prometheus, version 0.0.4.
+	 * Renders the whole registry in the Prometheus text format, version 0.0.4.
 	 *
-	 * <p>LES FAMILLES SONT TRIÉES PAR NOM. Prometheus ne l'exige pas, mais un {@code curl
-	 * /metrics} lisible à l'œil vaut tous les outils de diagnostic le jour où quelque chose cloche.
+	 * <p>Families are sorted by name. Prometheus does not require it, but a {@code curl /metrics}
+	 * that reads well by eye is the best debugging tool when something is off.
 	 */
-	public String rendre() {
+	public String render() {
 		StringBuilder out = new StringBuilder(16 * 1024);
 		instruments.values().stream()
-				.sorted(java.util.Comparator.comparing(m -> m.name))
-				.forEach(m -> rendreInstrument(out, m));
+				.sorted(Comparator.comparing(m -> m.name))
+				.forEach(m -> renderMetric(out, m));
 		return out.toString();
 	}
 
-	private void rendreInstrument(StringBuilder out, Metric m) {
+	private void renderMetric(StringBuilder out, Metric m) {
 		if (m.series.isEmpty()) {
 			return;
 		}
-		out.append("# HELP ").append(m.name).append(' ').append(echapperAide(m.help)).append('\n');
+		out.append("# HELP ").append(m.name).append(' ').append(escapeHelp(m.help)).append('\n');
 		out.append("# TYPE ").append(m.name).append(' ').append(m.type()).append('\n');
 
 		for (Map.Entry<Metric.LabelValues, double[]> e : m.series.entrySet()) {
-			String[] valeurs = e.getKey().valeurs;
+			String[] values = e.getKey().values;
 			double[] s = e.getValue();
 			if (m instanceof Histogram h) {
-				rendreHistogramme(out, h, valeurs, s);
+				renderHistogram(out, h, values, s);
 			} else {
-				ligne(out, m.name, m.labelNames, valeurs, null, null, s[0]);
+				line(out, m.name, m.labelNames, values, null, null, s[0]);
 			}
 		}
 	}
 
-	private void rendreHistogramme(StringBuilder out, Histogram h, String[] valeurs, double[] s) {
-		// Les seaux sont CUMULATIFS et doivent sortir dans l'ordre croissant : Prometheus
-		// s'appuie sur cet ordre pour interpoler les quantiles.
-		for (int i = 0; i < h.seuils.length; i++) {
-			ligne(out, h.name + "_bucket", h.labelNames, valeurs, "le", nombre(h.seuils[i]), s[i]);
+	private void renderHistogram(StringBuilder out, Histogram h, String[] values, double[] s) {
+		// Buckets are cumulative and must come out in increasing order: Prometheus relies on it
+		// to interpolate quantiles.
+		for (int i = 0; i < h.bounds.length; i++) {
+			line(out, h.name + "_bucket", h.labelNames, values, "le", number(h.bounds[i]), s[i]);
 		}
-		double total = s[h.seuils.length + 1];
-		ligne(out, h.name + "_bucket", h.labelNames, valeurs, "le", "+Inf", total);
-		ligne(out, h.name + "_sum", h.labelNames, valeurs, null, null, s[h.seuils.length]);
-		ligne(out, h.name + "_count", h.labelNames, valeurs, null, null, total);
+		double count = s[h.bounds.length + 1];
+		line(out, h.name + "_bucket", h.labelNames, values, "le", "+Inf", count);
+		line(out, h.name + "_sum", h.labelNames, values, null, null, s[h.bounds.length]);
+		line(out, h.name + "_count", h.labelNames, values, null, null, count);
 	}
 
-	private void ligne(StringBuilder out, String nom, String[] noms, String[] valeurs,
-			String nomSup, String valeurSup, double valeur) {
-		out.append(nom);
-		if (noms.length > 0 || nomSup != null) {
+	private void line(StringBuilder out, String name, String[] labelNames, String[] labelValues,
+			String extraName, String extraValue, double value) {
+		out.append(name);
+		if (labelNames.length > 0 || extraName != null) {
 			out.append('{');
-			for (int i = 0; i < noms.length; i++) {
+			for (int i = 0; i < labelNames.length; i++) {
 				if (i > 0) {
 					out.append(',');
 				}
-				out.append(noms[i]).append("=\"").append(echapper(valeurs[i])).append('"');
+				out.append(labelNames[i]).append("=\"").append(escape(labelValues[i])).append('"');
 			}
-			if (nomSup != null) {
-				if (noms.length > 0) {
+			if (extraName != null) {
+				if (labelNames.length > 0) {
 					out.append(',');
 				}
-				out.append(nomSup).append("=\"").append(valeurSup).append('"');
+				out.append(extraName).append("=\"").append(extraValue).append('"');
 			}
 			out.append('}');
 		}
-		out.append(' ').append(nombre(valeur)).append('\n');
+		out.append(' ').append(number(value)).append('\n');
 	}
 
 	/**
-	 * Un nombre au format attendu.
+	 * Formats a sample value.
 	 *
-	 * <p>Locale.ROOT est OBLIGATOIRE : sur un serveur en locale française, {@code %f} écrirait
-	 * « 20,0 » et Prometheus rejetterait la ligne entière. Le serveur tourne en Europe/Paris, le
-	 * piège est réel.
+	 * <p>{@code Locale.ROOT} is mandatory: under a French or German locale, {@code %f} writes
+	 * "20,0" and Prometheus rejects the whole line.
 	 *
-	 * <p>Les entiers sortent sans décimale pour que le fichier reste lisible, et les valeurs
-	 * spéciales prennent l'orthographe de Prometheus, qui n'est pas celle de Java.
+	 * <p>Integers are written without decimals to keep the output readable, and special values use
+	 * Prometheus' spelling, which differs from Java's.
 	 */
-	static String nombre(double v) {
+	static String number(double v) {
 		if (Double.isNaN(v)) {
 			return "NaN";
 		}
@@ -220,26 +220,25 @@ public final class MetricRegistry {
 		}
 		double abs = Math.abs(v);
 		if (abs < 1e-6 || abs >= 1e15) {
-			// Notation scientifique : Prometheus l'accepte, et écrire 1e-9 en décimal donnerait
-			// une ligne illisible pour une valeur qui ne veut de toute façon rien dire.
+			// Scientific notation: Prometheus accepts it, and 1e-9 written out in decimal is
+			// unreadable for a value that means nothing at that scale anyway.
 			return Double.toString(v);
 		}
-		// La représentation la plus COURTE qui relit exactement le même double. « %.6g » rendait
-		// 0,001 sous la forme « 0.00100000 » : juste, mais un seuil d'histogramme se relit à
-		// l'œil, et huit zéros de plus n'aident personne.
-		return new java.math.BigDecimal(Double.toString(v)).stripTrailingZeros().toPlainString();
+		// The shortest representation that parses back to the same double. "%.6g" printed 0.001
+		// as "0.00100000": correct, but bucket bounds are read by eye.
+		return new BigDecimal(Double.toString(v)).stripTrailingZeros().toPlainString();
 	}
 
-	/** Dans une valeur d'étiquette, trois caractères doivent être protégés. */
-	static String echapper(String v) {
+	/** Label values need three characters escaped. */
+	static String escape(String v) {
 		if (v == null) {
 			return "";
 		}
 		return v.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
 	}
 
-	/** Dans une ligne d'aide, deux seulement — les guillemets y sont libres. */
-	static String echapperAide(String v) {
+	/** Help text needs only two; quotes are allowed there. */
+	static String escapeHelp(String v) {
 		return v.replace("\\", "\\\\").replace("\n", "\\n");
 	}
 }

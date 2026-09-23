@@ -1,27 +1,27 @@
 package fr.samflix.vaniametrics.api;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * La base commune aux trois instruments.
+ * Common base of the three instruments.
  *
- * <p>UNE FAMILLE, PLUSIEURS SÉRIES. Un instrument porte un nom, une aide, et une carte des séries
- * indexée par les VALEURS de ses étiquettes. {@code mc_world_entities} est une famille ;
- * {@code mc_world_entities{world="lobby"}} en est une série.
+ * <p>One family, many series. An instrument has a name, a help text and a map of series keyed by
+ * label values. {@code mc_world_entities} is a family; {@code mc_world_entities{world="lobby"}} is
+ * one of its series.
  *
- * <p>POURQUOI UNE ConcurrentHashMap ET DES DOUBLE ATOMIQUES. Les compteurs sont alimentés depuis
- * les fils d'événements du serveur — le fil principal, le fil réseau de PacketEvents, les tâches
- * asynchrones — et lus par le fil HTTP du scrape. Sans cela, on lirait des valeurs à moitié
- * écrites, et le plugin censé mesurer la santé du serveur y ajouterait une course.
+ * <p>Instruments are written from the server's event threads (main thread, PacketEvents' netty
+ * threads, async tasks) and read by the HTTP thread on scrape, hence the concurrent map and the
+ * per-series locking. Without them the scrape would read half-written values.
  */
 public abstract class Metric {
 
-	/** Le nom complet, préfixe compris : {@code mc_tps}. */
+	/** Full name, prefix included: {@code mc_server_tps}. */
 	public final String name;
-	/** La ligne {@code # HELP}. Obligatoire : un graphique sans légende ne se relit pas. */
+	/** The {@code # HELP} line. */
 	public final String help;
-	/** Les NOMS des étiquettes, dans l'ordre. Les valeurs arrivent à l'écriture. */
+	/** Label names, in order. Values are supplied on write. */
 	public final String[] labelNames;
 
 	final Map<LabelValues, double[]> series = new ConcurrentHashMap<>();
@@ -32,48 +32,47 @@ public abstract class Metric {
 		this.labelNames = labelNames;
 	}
 
-	/** Le mot qui va dans la ligne {@code # TYPE}. */
+	/** The word on the {@code # TYPE} line. */
 	abstract String type();
 
 	/**
-	 * La série correspondant à ces valeurs d'étiquettes, créée au besoin.
+	 * The series for these label values, created if needed.
 	 *
-	 * <p>Le tableau rendu est l'état interne de la série : sa longueur dépend de l'instrument —
-	 * 1 pour une jauge ou un compteur, {@code buckets + 2} pour un histogramme.
+	 * <p>The returned array is the series' internal state. Its length depends on the instrument:
+	 * 1 for a gauge or a counter, {@code buckets + 2} for a histogram.
 	 */
-	double[] serie(int taille, String... valeurs) {
-		if (valeurs.length != labelNames.length) {
+	double[] seriesFor(int size, String... values) {
+		if (values.length != labelNames.length) {
 			throw new IllegalArgumentException(
-					name + " attend " + labelNames.length + " étiquette(s), pas " + valeurs.length);
+					name + " expects " + labelNames.length + " label(s), got " + values.length);
 		}
-		return series.computeIfAbsent(new LabelValues(valeurs), k -> new double[taille]);
+		return series.computeIfAbsent(new LabelValues(values), k -> new double[size]);
 	}
 
 	/**
-	 * Oublie toutes les séries.
+	 * Drops every series.
 	 *
-	 * <p>INDISPENSABLE AUX JAUGES À ÉTIQUETTES VARIABLES. Un monde déchargé, un type d'entité qui
-	 * disparaît, une version de client qui n'est plus connectée : sans remise à zéro, leur dernière
-	 * valeur resterait publiée pour toujours et Grafana montrerait des zombies. Les compteurs, eux,
-	 * ne doivent JAMAIS être remis à zéro — Prometheus lirait un redémarrage.
+	 * <p>Required for gauges whose label values come and go: an unloaded world, an entity type that
+	 * disappeared, a client version nobody uses any more. Without a reset their last value would be
+	 * published forever. Never clear a counter: Prometheus would read it as a restart.
 	 */
 	public void clear() {
 		series.clear();
 	}
 
-	/** Une clé de série : les valeurs d'étiquettes, comparables et hachables. */
+	/** A series key: the label values, comparable and hashable. */
 	static final class LabelValues {
-		final String[] valeurs;
+		final String[] values;
 		private final int hash;
 
-		LabelValues(String[] valeurs) {
-			this.valeurs = valeurs;
-			this.hash = java.util.Arrays.hashCode(valeurs);
+		LabelValues(String[] values) {
+			this.values = values;
+			this.hash = Arrays.hashCode(values);
 		}
 
 		@Override
 		public boolean equals(Object o) {
-			return o instanceof LabelValues autre && java.util.Arrays.equals(valeurs, autre.valeurs);
+			return o instanceof LabelValues other && Arrays.equals(values, other.values);
 		}
 
 		@Override
