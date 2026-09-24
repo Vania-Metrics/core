@@ -67,7 +67,7 @@ that is the ref collectors pin.
   build, `collector-test.yml` says what to install besides the core.
 - **CI**: `build.yml` on every push (unit tests and Paper), `platforms.yml` monthly and by hand,
   `collector.yml` called by every collector repository. Each run on `main` ends by recording its
-  results on the [status page](https://github.com/Vania-Metrics/.github/blob/status/README.md).
+  results for the [documentation site](https://vania-metrics.github.io/compatibility).
 
 ## Dependencies
 
