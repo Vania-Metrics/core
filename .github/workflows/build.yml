@@ -46,3 +46,16 @@ jobs:
           name: logs
           path: testkit/build/vania-it/
           retention-days: 5
+
+  # Records the result on the organization's status page (Vania-Metrics/.github, status branch).
+  status:
+    needs: build
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: Vania-Metrics/.github/.github/workflows/status.yml@main
+    with:
+      result: ${{ needs.build.result }}
+    secrets:
+      STATUS_DEPLOY_KEY: ${{ secrets.VANIA_STATUS_DEPLOY_KEY }}

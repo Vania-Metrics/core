@@ -66,7 +66,8 @@ that is the ref collectors pin.
 - **Collectors** run the same harness: `testkit/collector-it.gradle.kts` wires it into their
   build, `collector-test.yml` says what to install besides the core.
 - **CI**: `build.yml` on every push (unit tests and Paper), `platforms.yml` monthly and by hand,
-  `collector.yml` called by every collector repository.
+  `collector.yml` called by every collector repository. Each run on `main` ends by recording its
+  results on the [status page](https://github.com/Vania-Metrics/.github/blob/status/README.md).
 
 ## Dependencies
 
