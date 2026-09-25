@@ -10,7 +10,7 @@ package fr.samflix.vaniametrics.api;
  */
 public final class Version {
 
-	public static final String VALUE = "0.6.0";
+	public static final String VALUE = "0.6.0"; // x-release-please-version
 
 	private Version() {}
 }

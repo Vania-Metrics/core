@@ -1,0 +1,32 @@
+# Releases the core: on every push to main, release-please keeps a release pull request up to
+# date, and merging it tags vX.Y.Z (the ref collectors pin) and publishes the GitHub release with
+# the jar of every platform. Run by hand, it publishes the current version as it is.
+# The steps live in Vania-Metrics/.github, .github/workflows/release.yml.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: Vania-Metrics/.github/.github/workflows/release.yml@main
+    with:
+      publish-current: ${{ github.event_name == 'workflow_dispatch' }}
+      with-core: false
+      build: ./gradlew assemble
+      jars: >-
+        api/build/libs/*.jar bukkit/build/libs/*.jar sponge/build/libs/*.jar
+        velocity/build/libs/*.jar bungee/build/libs/*.jar geyser/build/libs/*.jar

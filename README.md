@@ -42,8 +42,10 @@ sponge/build/libs/vania-metrics-sponge-<v>.jar       API + common bundled
 velocity/build/libs/vania-metrics-velocity-<v>.jar   API + common bundled
 ```
 
-The version is read from `api/.../Version.java`, never copied. Releases are tagged `vX.Y.Z`;
-that is the ref collectors pin.
+The version is read from `api/.../Version.java`, never copied. Releases are made by
+release-please: commit messages start with a type (`feat:`, `fix:`, `chore:`…), every push to
+`main` updates a release pull request, and merging it tags `vX.Y.Z` — the ref collectors pin — and
+publishes the GitHub release with the jar of every platform.
 
 ## Tests
 

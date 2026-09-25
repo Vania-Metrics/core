@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "packages": {
+    ".": {
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "api/src/main/java/fr/samflix/vaniametrics/api/Version.java"
+        },
+        {
+          "type": "generic",
+          "path": "compatibility.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/collector.yml"
+        }
+      ]
+    }
+  }
+}
