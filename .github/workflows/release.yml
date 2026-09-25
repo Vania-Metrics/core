@@ -1,6 +1,7 @@
 # Releases the core: on every push to main, release-please keeps a release pull request up to
 # date, and merging it tags vX.Y.Z (the ref collectors pin) and publishes the GitHub release with
-# the jar of every platform. Run by hand, it publishes the current version as it is.
+# the jar of every platform, and on Modrinth. Run by hand, it publishes the current version
+# as it is.
 # The steps live in Vania-Metrics/.github, .github/workflows/release.yml.
 name: release
 
@@ -30,3 +31,5 @@ jobs:
       jars: >-
         api/build/libs/*.jar bukkit/build/libs/*.jar sponge/build/libs/*.jar
         velocity/build/libs/*.jar bungee/build/libs/*.jar geyser/build/libs/*.jar
+    secrets:
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
