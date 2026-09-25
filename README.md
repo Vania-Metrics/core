@@ -1,3 +1,5 @@
+<img src="icon.png" alt="" width="96" align="right">
+
 # VaniaMetrics core
 
 The public API and the core plugin of VaniaMetrics, a Prometheus exporter for Minecraft servers.
