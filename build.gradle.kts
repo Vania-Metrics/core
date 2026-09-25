@@ -22,6 +22,11 @@ subprojects {
     group = "fr.samflix"
     version = vaniaVersion
 
+    // The license travels with every jar.
+    tasks.withType<Jar>().configureEach {
+        from(rootDir.resolve("LICENSE")) { into("META-INF") }
+    }
+
     tasks.withType<JavaCompile>().configureEach {
         options.release = 21
         options.encoding = "UTF-8"
