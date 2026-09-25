@@ -85,3 +85,7 @@ Versions live in `gradle/libs.versions.toml`. Gradle verifies every SHA-256 chec
 Each collector lives in its own repository (`Vania-Metrics/collector-<name>`) and includes this
 repository as a composite build, checked out at a tag: it depends on
 `fr.samflix:vania-metrics-api`, which Gradle substitutes with the `api/` project.
+
+## License
+
+[GNU General Public License v3.0](LICENSE).
